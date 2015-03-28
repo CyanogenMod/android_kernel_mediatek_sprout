@@ -945,7 +945,7 @@ out:
 	return ret;
 }
  
-void __exit ccci_ipc_exit(int md_id)
+void ccci_ipc_exit(int md_id)
 {
 	int				i;
 	ipc_ctl_block_t	*ctl_b = ipc_ctl_block[md_id];

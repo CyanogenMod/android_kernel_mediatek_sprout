@@ -179,7 +179,7 @@ int parse_eemcs_dfo_setting(void *dfo_data, int num)
 #endif
 
 
-void eemcs_memory_reserve(void){
+void __init eemcs_memory_reserve(void){
     unsigned int	md5_en;
     
     if( (ext_md_usage_case&MD5_EN)== MD5_EN) { //Only MD1 enabled

@@ -465,7 +465,7 @@ static DEVICE_ATTR(pwm_register, 0664, show_pwm_register, store_pwm_register);
 /****************************************************************************
  * driver functions
  ***************************************************************************/
-static int __init mt65xx_leds_probe(struct platform_device *pdev)
+static int __refdata mt65xx_leds_probe(struct platform_device *pdev)
 {
 	int i;
 	int ret, rc;
