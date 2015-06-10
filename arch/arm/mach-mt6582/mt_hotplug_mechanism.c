@@ -110,12 +110,11 @@ static void mt_hotplug_mechanism_early_suspend(struct early_suspend *h)
     policy = cpufreq_cpu_get(0);
         if (!policy)
             return;
-    HOTPLUG_INFO("mt_hotplug_mechanism_early_suspend\n");
 
     if (!g_enable)
         goto early_suspend_end;
     
-    if (!g_enable_cpu_rush_boost && policy->governor == &cpufreq_gov_hotplug)
+    if (!g_enable_cpu_rush_boost && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
         HOTPLUG_INFO("mt_hotplug_mechanism_early_suspend\n");
@@ -143,12 +142,11 @@ static void mt_hotplug_mechanism_late_resume(struct early_suspend *h)
     policy = cpufreq_cpu_get(0);
         if (!policy)
             return;
-    HOTPLUG_INFO("mt_hotplug_mechanism_late_resume\n");
 
     if (!g_enable)
         goto late_resume_end;
     
-    if (!g_enable_cpu_rush_boost && policy->governor == &cpufreq_gov_hotplug)
+    if (!g_enable_cpu_rush_boost && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
         HOTPLUG_INFO("mt_hotplug_mechanism_late_resume\n");
@@ -186,12 +184,11 @@ static int mt_hotplug_mechanism_suspend(struct platform_device *pdev, pm_message
     policy = cpufreq_cpu_get(0);
         if (!policy)
             return;
-    HOTPLUG_INFO("mt_hotplug_mechanism_suspend\n");
     
     if (!g_enable)
         return 0;
     
-    if (!g_enable_dynamic_cpu_hotplug_at_suspend && policy->governor == &cpufreq_gov_hotplug)
+    if (!g_enable_dynamic_cpu_hotplug_at_suspend && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
         HOTPLUG_INFO("mt_hotplug_mechanism_suspend\n");
@@ -214,12 +211,11 @@ static int mt_hotplug_mechanism_resume(struct platform_device *pdev)
     policy = cpufreq_cpu_get(0);
         if (!policy)
            return;
-    HOTPLUG_INFO("mt_hotplug_mechanism_resume\n");
     
     if (!g_enable)
         return 0;
     
-    if (!g_enable_dynamic_cpu_hotplug_at_suspend && policy->governor == &cpufreq_gov_hotplug)
+    if (!g_enable_dynamic_cpu_hotplug_at_suspend && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
         HOTPLUG_INFO("mt_hotplug_mechanism_resume\n");
