@@ -27,7 +27,7 @@ export CROSS_COMPILE="/root/cm12.1/prebuilts/gcc/linux-x86/arm/arm-eabi-4.8/bin/
 export ARCH=arm
 export SUBARCH=arm
 export KBUILD_BUILD_USER="varun.chitre15"
-export KBUILD_BUILD_HOST="Monster-Machine"
+export KBUILD_BUILD_HOST="EroticBox"
 
 compile_kernel ()
 {
