@@ -35,8 +35,8 @@
  */
 
 /* Tuning Interface */
-#ifdef CONFIG_MACH_LGE
-#define FREQ_RESPONSIVENESS		2265600
+#ifdef ARCH_MT6582
+#define FREQ_RESPONSIVENESS		1300000
 #else
 #define FREQ_RESPONSIVENESS		1134000
 #endif
