@@ -88,6 +88,11 @@ config IOSCHED_FIOPS
 	---help---
 	Requests are chosen according to SSTF with a penalty of rev_penalty
 	for switching head direction.
+config IOSCHED_TRIPNDROID
+	tristate "Tripndroid"
+	default y
+	---help---
+	  The Trip N Droid scheduler
 
 config CGROUP_BFQIO
 	bool "BFQ hierarchical scheduling support"
@@ -139,6 +144,9 @@ choice
 	config DEFAULT_FIOPS
 		bool "FIOPS" if IOSCHED_FIOPS=y
 
+	config DEFAULT_TRIPNDROID
+		bool "TRIPNDROID" if IOSCHED_TRIPNDROID=y
+
 endchoice
 
 config DEFAULT_IOSCHED
@@ -152,6 +160,7 @@ config DEFAULT_IOSCHED
 	default "zen" if DEFAULT_ZEN
 	default "fifo" if DEFAULT_FIFO
 	default "fiops" if DEFAULT_FIOPS
+	default "tripndroid" if DEFAULT_TRIPNDROID
 
 endmenu
 
