@@ -34,7 +34,7 @@ compile_kernel ()
 echo -e "$blue***********************************************"
 echo "          Compiling ThunderZap kernel          "
 echo -e "***********************************************$nocol"
-make sprout_defconfig
+make cyanogenmod_sprout_defconfig
 make -j32
 if ! [ -a $ZIMAGE ];
 then
