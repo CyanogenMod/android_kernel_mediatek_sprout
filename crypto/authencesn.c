@@ -715,9 +715,8 @@ static struct crypto_instance *crypto_authenc_esn_alloc(struct rtattr **tb)
 	int err;
 
 	algt = crypto_get_attr_type(tb);
-	err = PTR_ERR(algt);
 	if (IS_ERR(algt))
-		return ERR_PTR(err);
+		return ERR_CAST(algt);
 
 	if ((algt->type ^ CRYPTO_ALG_TYPE_AEAD) & algt->mask)
 		return ERR_PTR(-EINVAL);
@@ -833,3 +832,4 @@ module_exit(crypto_authenc_esn_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Steffen Klassert <steffen.klassert@secunet.com>");
 MODULE_DESCRIPTION("AEAD wrapper for IPsec with extended sequence numbers");
+MODULE_ALIAS_CRYPTO("authencesn");

@@ -94,8 +94,8 @@ static int cap_sb_statfs(struct dentry *dentry)
 	return 0;
 }
 
-static int cap_sb_mount(char *dev_name, struct path *path, char *type,
-			unsigned long flags, void *data)
+static int cap_sb_mount(const char *dev_name, struct path *path,
+			const char *type, unsigned long flags, void *data)
 {
 	return 0;
 }
@@ -118,9 +118,10 @@ static int cap_sb_set_mnt_opts(struct super_block *sb,
 	return 0;
 }
 
-static void cap_sb_clone_mnt_opts(const struct super_block *oldsb,
+static int cap_sb_clone_mnt_opts(const struct super_block *oldsb,
 				  struct super_block *newsb)
 {
+	return 0;
 }
 
 static int cap_sb_parse_opts_str(char *options, struct security_mnt_opts *opts)
@@ -304,7 +305,7 @@ static int cap_path_chmod(struct path *path, umode_t mode)
 	return 0;
 }
 
-static int cap_path_chown(struct path *path, uid_t uid, gid_t gid)
+static int cap_path_chown(struct path *path, kuid_t uid, kgid_t gid)
 {
 	return 0;
 }
@@ -368,7 +369,7 @@ static int cap_file_receive(struct file *file)
 	return 0;
 }
 
-static int cap_dentry_open(struct file *file, const struct cred *cred)
+static int cap_file_open(struct file *file, const struct cred *cred)
 {
 	return 0;
 }
@@ -411,6 +412,11 @@ static int cap_kernel_create_files_as(struct cred *new, struct inode *inode)
 }
 
 static int cap_kernel_module_request(char *kmod_name)
+{
+	return 0;
+}
+
+static int cap_kernel_module_from_file(struct file *file)
 {
 	return 0;
 }
@@ -724,19 +730,39 @@ static void cap_req_classify_flow(const struct request_sock *req,
 {
 }
 
+static int cap_tun_dev_alloc_security(void **security)
+{
+	return 0;
+}
+
+static void cap_tun_dev_free_security(void *security)
+{
+}
+
 static int cap_tun_dev_create(void)
 {
 	return 0;
 }
 
-static void cap_tun_dev_post_create(struct sock *sk)
-{
-}
-
-static int cap_tun_dev_attach(struct sock *sk)
+static int cap_tun_dev_attach_queue(void *security)
 {
 	return 0;
 }
+
+static int cap_tun_dev_attach(struct sock *sk, void *security)
+{
+	return 0;
+}
+
+static int cap_tun_dev_open(void *security)
+{
+	return 0;
+}
+
+static void cap_skb_owned_by(struct sk_buff *skb, struct sock *sk)
+{
+}
+
 #endif	/* CONFIG_SECURITY_NETWORK */
 
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
@@ -973,14 +999,15 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_alloc_security);
 	set_to_cap_if_null(ops, file_free_security);
 	set_to_cap_if_null(ops, file_ioctl);
-	set_to_cap_if_null(ops, file_mmap);
+	set_to_cap_if_null(ops, mmap_addr);
+	set_to_cap_if_null(ops, mmap_file);
 	set_to_cap_if_null(ops, file_mprotect);
 	set_to_cap_if_null(ops, file_lock);
 	set_to_cap_if_null(ops, file_fcntl);
 	set_to_cap_if_null(ops, file_set_fowner);
 	set_to_cap_if_null(ops, file_send_sigiotask);
 	set_to_cap_if_null(ops, file_receive);
-	set_to_cap_if_null(ops, dentry_open);
+	set_to_cap_if_null(ops, file_open);
 	set_to_cap_if_null(ops, task_create);
 	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);
@@ -990,6 +1017,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, kernel_act_as);
 	set_to_cap_if_null(ops, kernel_create_files_as);
 	set_to_cap_if_null(ops, kernel_module_request);
+	set_to_cap_if_null(ops, kernel_module_from_file);
 	set_to_cap_if_null(ops, task_fix_setuid);
 	set_to_cap_if_null(ops, task_setpgid);
 	set_to_cap_if_null(ops, task_getpgid);
@@ -1067,9 +1095,13 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, secmark_refcount_inc);
 	set_to_cap_if_null(ops, secmark_refcount_dec);
 	set_to_cap_if_null(ops, req_classify_flow);
+	set_to_cap_if_null(ops, tun_dev_alloc_security);
+	set_to_cap_if_null(ops, tun_dev_free_security);
 	set_to_cap_if_null(ops, tun_dev_create);
-	set_to_cap_if_null(ops, tun_dev_post_create);
+	set_to_cap_if_null(ops, tun_dev_open);
+	set_to_cap_if_null(ops, tun_dev_attach_queue);
 	set_to_cap_if_null(ops, tun_dev_attach);
+	set_to_cap_if_null(ops, skb_owned_by);
 #endif	/* CONFIG_SECURITY_NETWORK */
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
 	set_to_cap_if_null(ops, xfrm_policy_alloc_security);

@@ -405,7 +405,7 @@ c4_linux_xmit (struct sk_buff * skb, struct net_device * ndev)
     priv = hdlc->priv;
 
     rval = musycc_start_xmit (priv->ci, priv->channum, skb);
-    return -rval;
+    return rval;
 }
 
 static const struct net_device_ops chan_ops = {
@@ -773,7 +773,9 @@ do_del_chan (struct net_device * musycc_dev, void *data)
     if (copy_from_user (&cp, data,
                         sizeof (struct sbecom_chan_param)))
         return -EFAULT;
-    sprintf (buf, CHANNAME "%d", cp.channum);
+    if (cp.channum > 999)
+        return -EINVAL;
+    snprintf (buf, sizeof(buf), CHANNAME "%d", cp.channum);
     if (!(dev = dev_get_by_name (&init_net, buf)))
         return -ENOENT;
     dev_put (dev);
@@ -1169,11 +1171,11 @@ cleanup_hdlc (void)
 STATIC void __exit
 c4_mod_remove (void)
 {
-    cleanup_hdlc ();            /* delete any missed channels */
-    cleanup_devs ();
-    c4_cleanup ();
-    cleanup_ioremap ();
-    pr_info("SBE - driver removed.\n");
+	cleanup_hdlc();            /* delete any missed channels */
+	cleanup_devs();
+	c4_cleanup();
+	cleanup_ioremap();
+	pr_info("SBE - driver removed.\n");
 }
 
 module_init (c4_mod_init);

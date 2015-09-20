@@ -1,6 +1,3 @@
-#ifndef _INPUT_H
-#define _INPUT_H
-
 /*
  * Copyright (c) 1999-2002 Vojtech Pavlik
  *
@@ -8,10 +5,12 @@
  * under the terms of the GNU General Public License version 2 as published by
  * the Free Software Foundation.
  */
+#ifndef _INPUT_H
+#define _INPUT_H
 
-#ifdef __KERNEL__
 #include <linux/time.h>
 #include <linux/list.h>
+<<<<<<< HEAD
 #else
 #include <sys/time.h>
 #include <sys/ioctl.h>
@@ -1188,6 +1187,12 @@ struct ff_effect {
 #define FF_CNT		(FF_MAX+1)
 
 #ifdef __KERNEL__
+=======
+#include <uapi/linux/input.h>
+/* Implementation details, userspace should not care about these */
+#define ABS_MT_FIRST		ABS_MT_TOUCH_MAJOR
+#define ABS_MT_LAST		ABS_MT_TOOL_Y
+>>>>>>> v3.10.88
 
 /*
  * In-kernel definitions.
@@ -1197,6 +1202,18 @@ struct ff_effect {
 #include <linux/fs.h>
 #include <linux/timer.h>
 #include <linux/mod_devicetable.h>
+
+/**
+ * struct input_value - input value representation
+ * @type: type of value (EV_KEY, EV_ABS, etc)
+ * @code: the value code
+ * @value: the value
+ */
+struct input_value {
+	__u16 type;
+	__u16 code;
+	__s32 value;
+};
 
 /**
  * struct input_dev - represents an input device
@@ -1233,11 +1250,7 @@ struct ff_effect {
  *	software autorepeat
  * @timer: timer for software autorepeat
  * @rep: current values for autorepeat parameters (delay, rate)
- * @mt: pointer to array of struct input_mt_slot holding current values
- *	of tracked contacts
- * @mtsize: number of MT slots the device uses
- * @slot: MT slot currently being transmitted
- * @trkid: stores MT tracking ID for the current contact
+ * @mt: pointer to multitouch state
  * @absinfo: array of &struct input_absinfo elements holding information
  *	about absolute axes (current value, min, max, flat, fuzz,
  *	resolution)
@@ -1274,11 +1287,15 @@ struct ff_effect {
  *	last user closes the device
  * @going_away: marks devices that are in a middle of unregistering and
  *	causes input_open_device*() fail with -ENODEV.
- * @sync: set to %true when there were no new events since last EV_SYN
  * @dev: driver model's view of this device
  * @h_list: list of input handles associated with the device. When
  *	accessing the list dev->mutex must be held
  * @node: used to place the device onto input_dev_list
+ * @num_vals: number of values queued in the current frame
+ * @max_vals: maximum number of values queued in a frame
+ * @vals: array of values queued in the current frame
+ * @devres_managed: indicates that devices is managed with devres framework
+ *	and needs not be explicitly unregistered or freed.
  */
 struct input_dev {
 	const char *name;
@@ -1317,10 +1334,7 @@ struct input_dev {
 
 	int rep[REP_CNT];
 
-	struct input_mt_slot *mt;
-	int mtsize;
-	int slot;
-	int trkid;
+	struct input_mt *mt;
 
 	struct input_absinfo *absinfo;
 
@@ -1342,12 +1356,16 @@ struct input_dev {
 	unsigned int users;
 	bool going_away;
 
-	bool sync;
-
 	struct device dev;
 
 	struct list_head	h_list;
 	struct list_head	node;
+
+	unsigned int num_vals;
+	unsigned int max_vals;
+	struct input_value *vals;
+
+	bool devres_managed;
 };
 #define to_input_dev(d) container_of(d, struct input_dev, dev)
 
@@ -1408,6 +1426,9 @@ struct input_handle;
  * @event: event handler. This method is being called by input core with
  *	interrupts disabled and dev->event_lock spinlock held and so
  *	it may not sleep
+ * @events: event sequence handler. This method is being called by
+ *	input core with interrupts disabled and dev->event_lock
+ *	spinlock held and so it may not sleep
  * @filter: similar to @event; separates normal event handlers from
  *	"filters".
  * @match: called after comparing device's id with handler's id_table
@@ -1417,8 +1438,8 @@ struct input_handle;
  * @start: starts handler for given handle. This function is called by
  *	input core right after connect() method and also when a process
  *	that "grabbed" a device releases it
- * @fops: file operations this driver implements
- * @minor: beginning of range of 32 minors for devices this driver
+ * @legacy_minors: set to %true by drivers using legacy minor ranges
+ * @minor: beginning of range of 32 legacy minors for devices this driver
  *	can provide
  * @name: name of the handler, to be shown in /proc/bus/input/handlers
  * @id_table: pointer to a table of input_device_ids this driver can
@@ -1444,13 +1465,15 @@ struct input_handler {
 	void *private;
 
 	void (*event)(struct input_handle *handle, unsigned int type, unsigned int code, int value);
+	void (*events)(struct input_handle *handle,
+		       const struct input_value *vals, unsigned int count);
 	bool (*filter)(struct input_handle *handle, unsigned int type, unsigned int code, int value);
 	bool (*match)(struct input_handler *handler, struct input_dev *dev);
 	int (*connect)(struct input_handler *handler, struct input_dev *dev, const struct input_device_id *id);
 	void (*disconnect)(struct input_handle *handle);
 	void (*start)(struct input_handle *handle);
 
-	const struct file_operations *fops;
+	bool legacy_minors;
 	int minor;
 	const char *name;
 
@@ -1486,7 +1509,8 @@ struct input_handle {
 	struct list_head	h_node;
 };
 
-struct input_dev *input_allocate_device(void);
+struct input_dev __must_check *input_allocate_device(void);
+struct input_dev __must_check *devm_input_allocate_device(struct device *);
 void input_free_device(struct input_dev *dev);
 
 static inline struct input_dev *input_get_device(struct input_dev *dev)
@@ -1517,6 +1541,10 @@ void input_reset_device(struct input_dev *);
 
 int __must_check input_register_handler(struct input_handler *);
 void input_unregister_handler(struct input_handler *);
+
+int __must_check input_get_new_minor(int legacy_base, unsigned int legacy_num,
+				     bool allow_dynamic);
+void input_free_minor(unsigned int minor);
 
 int input_handler_for_each_handle(struct input_handler *, void *data,
 				  int (*fn)(struct input_handle *, void *));
@@ -1682,5 +1710,4 @@ int input_ff_erase(struct input_dev *dev, int effect_id, struct file *file);
 int input_ff_create_memless(struct input_dev *dev, void *data,
 		int (*play_effect)(struct input_dev *, void *, struct ff_effect *));
 
-#endif
 #endif

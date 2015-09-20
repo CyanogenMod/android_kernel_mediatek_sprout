@@ -69,6 +69,9 @@ EXPORT_SYMBOL_GPL(xen_store_evtchn);
 struct xenstore_domain_interface *xen_store_interface;
 EXPORT_SYMBOL_GPL(xen_store_interface);
 
+enum xenstore_init xen_store_domain_type;
+EXPORT_SYMBOL_GPL(xen_store_domain_type);
+
 static unsigned long xen_store_mfn;
 
 static BLOCKING_NOTIFIER_HEAD(xenstore_chain);
@@ -324,8 +327,8 @@ static int cmp_dev(struct device *dev, void *data)
 	return 0;
 }
 
-struct xenbus_device *xenbus_device_find(const char *nodename,
-					 struct bus_type *bus)
+static struct xenbus_device *xenbus_device_find(const char *nodename,
+						struct bus_type *bus)
 {
 	struct xb_find_info info = { .dev = NULL, .nodename = nodename };
 
@@ -722,14 +725,38 @@ static int __init xenstored_local_init(void)
 static int __init xenbus_init(void)
 {
 	int err = 0;
+	uint64_t v = 0;
+	xen_store_domain_type = XS_UNKNOWN;
 
 	if (!xen_domain())
 		return -ENODEV;
 
 	xenbus_ring_ops_init();
 
-	if (xen_hvm_domain()) {
-		uint64_t v = 0;
+	if (xen_pv_domain())
+		xen_store_domain_type = XS_PV;
+	if (xen_hvm_domain())
+		xen_store_domain_type = XS_HVM;
+	if (xen_hvm_domain() && xen_initial_domain())
+		xen_store_domain_type = XS_LOCAL;
+	if (xen_pv_domain() && !xen_start_info->store_evtchn)
+		xen_store_domain_type = XS_LOCAL;
+	if (xen_pv_domain() && xen_start_info->store_evtchn)
+		xenstored_ready = 1;
+
+	switch (xen_store_domain_type) {
+	case XS_LOCAL:
+		err = xenstored_local_init();
+		if (err)
+			goto out_error;
+		xen_store_interface = mfn_to_virt(xen_store_mfn);
+		break;
+	case XS_PV:
+		xen_store_evtchn = xen_start_info->store_evtchn;
+		xen_store_mfn = xen_start_info->store_mfn;
+		xen_store_interface = mfn_to_virt(xen_store_mfn);
+		break;
+	case XS_HVM:
 		err = hvm_get_parameter(HVM_PARAM_STORE_EVTCHN, &v);
 		if (err)
 			goto out_error;
@@ -738,18 +765,12 @@ static int __init xenbus_init(void)
 		if (err)
 			goto out_error;
 		xen_store_mfn = (unsigned long)v;
-		xen_store_interface = ioremap(xen_store_mfn << PAGE_SHIFT, PAGE_SIZE);
-	} else {
-		xen_store_evtchn = xen_start_info->store_evtchn;
-		xen_store_mfn = xen_start_info->store_mfn;
-		if (xen_store_evtchn)
-			xenstored_ready = 1;
-		else {
-			err = xenstored_local_init();
-			if (err)
-				goto out_error;
-		}
-		xen_store_interface = mfn_to_virt(xen_store_mfn);
+		xen_store_interface =
+			xen_remap(xen_store_mfn << PAGE_SHIFT, PAGE_SIZE);
+		break;
+	default:
+		pr_warn("Xenstore state unknown\n");
+		break;
 	}
 
 	/* Initialize the interface to xenstore. */

@@ -352,8 +352,6 @@ static long nfcwilink_receive(void *priv_data, struct sk_buff *skb)
 	struct nfcwilink *drv = priv_data;
 	int rc;
 
-	nfc_dev_dbg(&drv->pdev->dev, "receive entry, len %d", skb->len);
-
 	if (!skb)
 		return -EFAULT;
 
@@ -361,6 +359,8 @@ static long nfcwilink_receive(void *priv_data, struct sk_buff *skb)
 		kfree_skb(skb);
 		return -EFAULT;
 	}
+
+	nfc_dev_dbg(&drv->pdev->dev, "receive entry, len %d", skb->len);
 
 	/* strip the ST header
 	(apart for the chnl byte, which is not received in the hdr) */
@@ -526,7 +526,7 @@ static int nfcwilink_probe(struct platform_device *pdev)
 
 	nfc_dev_dbg(&pdev->dev, "probe entry");
 
-	drv = kzalloc(sizeof(struct nfcwilink), GFP_KERNEL);
+	drv = devm_kzalloc(&pdev->dev, sizeof(struct nfcwilink), GFP_KERNEL);
 	if (!drv) {
 		rc = -ENOMEM;
 		goto exit;
@@ -535,18 +535,20 @@ static int nfcwilink_probe(struct platform_device *pdev)
 	drv->pdev = pdev;
 
 	protocols = NFC_PROTO_JEWEL_MASK
-			| NFC_PROTO_MIFARE_MASK | NFC_PROTO_FELICA_MASK
-			| NFC_PROTO_ISO14443_MASK
-			| NFC_PROTO_NFC_DEP_MASK;
+		| NFC_PROTO_MIFARE_MASK | NFC_PROTO_FELICA_MASK
+		| NFC_PROTO_ISO14443_MASK
+		| NFC_PROTO_ISO14443_B_MASK
+		| NFC_PROTO_NFC_DEP_MASK;
 
 	drv->ndev = nci_allocate_device(&nfcwilink_ops,
 					protocols,
+					NFC_SE_NONE,
 					NFCWILINK_HDR_LEN,
 					0);
 	if (!drv->ndev) {
 		nfc_dev_err(&pdev->dev, "nci_allocate_device failed");
 		rc = -ENOMEM;
-		goto free_exit;
+		goto exit;
 	}
 
 	nci_set_parent_dev(drv->ndev, &pdev->dev);
@@ -564,9 +566,6 @@ static int nfcwilink_probe(struct platform_device *pdev)
 
 free_dev_exit:
 	nci_free_device(drv->ndev);
-
-free_exit:
-	kfree(drv);
 
 exit:
 	return rc;
@@ -587,8 +586,6 @@ static int nfcwilink_remove(struct platform_device *pdev)
 	nci_unregister_device(ndev);
 	nci_free_device(ndev);
 
-	kfree(drv);
-
 	dev_set_drvdata(&pdev->dev, NULL);
 
 	return 0;
@@ -603,21 +600,7 @@ static struct platform_driver nfcwilink_driver = {
 	},
 };
 
-/* ------- Module Init/Exit interfaces ------ */
-static int __init nfcwilink_init(void)
-{
-	printk(KERN_INFO "NFC Driver for TI WiLink");
-
-	return platform_driver_register(&nfcwilink_driver);
-}
-
-static void __exit nfcwilink_exit(void)
-{
-	platform_driver_unregister(&nfcwilink_driver);
-}
-
-module_init(nfcwilink_init);
-module_exit(nfcwilink_exit);
+module_platform_driver(nfcwilink_driver);
 
 /* ------ Module Info ------ */
 

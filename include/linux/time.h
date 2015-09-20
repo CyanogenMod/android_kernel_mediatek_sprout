@@ -1,33 +1,10 @@
 #ifndef _LINUX_TIME_H
 #define _LINUX_TIME_H
 
-#include <linux/types.h>
-
-#ifdef __KERNEL__
 # include <linux/cache.h>
 # include <linux/seqlock.h>
 # include <linux/math64.h>
-#endif
-
-#ifndef _STRUCT_TIMESPEC
-#define _STRUCT_TIMESPEC
-struct timespec {
-	__kernel_time_t	tv_sec;			/* seconds */
-	long		tv_nsec;		/* nanoseconds */
-};
-#endif
-
-struct timeval {
-	__kernel_time_t		tv_sec;		/* seconds */
-	__kernel_suseconds_t	tv_usec;	/* microseconds */
-};
-
-struct timezone {
-	int	tz_minuteswest;	/* minutes west of Greenwich */
-	int	tz_dsttime;	/* type of dst correction */
-};
-
-#ifdef __KERNEL__
+#include <uapi/linux/time.h>
 
 extern struct timezone sys_tz;
 
@@ -137,9 +114,20 @@ static inline bool timespec_valid_strict(const struct timespec *ts)
 		return false;
 	return true;
 }
+<<<<<<< HEAD
+=======
+
+extern bool persistent_clock_exist;
+
+static inline bool has_persistent_clock(void)
+{
+	return persistent_clock_exist;
+}
+>>>>>>> v3.10.88
 
 extern void read_persistent_clock(struct timespec *ts);
 extern void read_boot_clock(struct timespec *ts);
+extern int persistent_clock_is_local;
 extern int update_persistent_clock(struct timespec now);
 void timekeeping_init(void);
 extern int timekeeping_suspended;
@@ -165,9 +153,7 @@ void timekeeping_inject_sleeptime(struct timespec *delta);
  * finer then tick granular time.
  */
 #ifdef CONFIG_ARCH_USES_GETTIMEOFFSET
-extern u32 arch_gettimeoffset(void);
-#else
-static inline u32 arch_gettimeoffset(void) { return 0; }
+extern u32 (*arch_gettimeoffset)(void);
 #endif
 
 extern void do_gettimeofday(struct timeval *tv);
@@ -181,6 +167,7 @@ extern int do_setitimer(int which, struct itimerval *value,
 			struct itimerval *ovalue);
 extern unsigned int alarm_setitimer(unsigned int seconds);
 extern int do_getitimer(int which, struct itimerval *value);
+extern int __getnstimeofday(struct timespec *tv);
 extern void getnstimeofday(struct timespec *tv);
 extern void getrawmonotonic(struct timespec *ts);
 extern void getnstime_raw_and_real(struct timespec *ts_raw,
@@ -189,11 +176,26 @@ extern void getboottime(struct timespec *ts);
 extern void monotonic_to_bootbased(struct timespec *ts);
 extern void get_monotonic_boottime(struct timespec *ts);
 
+static inline bool timeval_valid(const struct timeval *tv)
+{
+	/* Dates before 1970 are bogus */
+	if (tv->tv_sec < 0)
+		return false;
+
+	/* Can't have more microseconds then a second */
+	if (tv->tv_usec < 0 || tv->tv_usec >= USEC_PER_SEC)
+		return false;
+
+	return true;
+}
+
 extern struct timespec timespec_trunc(struct timespec t, unsigned gran);
 extern int timekeeping_valid_for_hres(void);
 extern u64 timekeeping_max_deferment(void);
-extern void timekeeping_leap_insert(int leapsecond);
 extern int timekeeping_inject_offset(struct timespec *ts);
+extern s32 timekeeping_get_tai_offset(void);
+extern void timekeeping_set_tai_offset(s32 tai_offset);
+extern void timekeeping_clocktai(struct timespec *ts);
 
 struct tms;
 extern void do_sys_times(struct tms *);
@@ -281,6 +283,7 @@ static __always_inline void timespec_add_ns(struct timespec *a, u64 ns)
 	a->tv_nsec = ns;
 }
 
+<<<<<<< HEAD
 #endif /* __KERNEL__ */
 
 /*
@@ -328,4 +331,6 @@ struct itimerval {
  */
 #define TIMER_ABSTIME			0x01
 
+=======
+>>>>>>> v3.10.88
 #endif

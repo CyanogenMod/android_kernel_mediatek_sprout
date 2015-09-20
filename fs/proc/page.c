@@ -185,7 +185,11 @@ u64 stable_page_flags(struct page *page)
 	 * just checks PG_head/PG_tail, so we need to check PageLRU to make
 	 * sure a given page is a thp, not a non-huge compound page.
 	 */
+<<<<<<< HEAD
 	else if (PageTransCompound(page) && PageLRU(compound_trans_head(page)))
+=======
+	else if (PageTransCompound(page) && PageLRU(compound_head(page)))
+>>>>>>> v3.10.88
 		u |= 1 << KPF_THP;
 
 	/*

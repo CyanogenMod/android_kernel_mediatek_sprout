@@ -39,10 +39,11 @@
 #include <asm/mach/irq.h>
 
 #include <mach/hardware.h>
-#include <mach/board.h>
 #include <mach/at91rm9200_mc.h>
 #include <mach/at91_ramc.h>
 
+#include "at91_aic.h"
+#include "board.h"
 #include "generic.h"
 
 
@@ -50,20 +51,6 @@ static void __init dk_init_early(void)
 {
 	/* Initialize processor: 18.432 MHz crystal */
 	at91_initialize(18432000);
-
-	/* Setup the LEDs */
-	at91_init_leds(AT91_PIN_PB2, AT91_PIN_PB2);
-
-	/* DBGU on ttyS0. (Rx & Tx only) */
-	at91_register_uart(0, 0, 0);
-
-	/* USART1 on ttyS1. (Rx, Tx, CTS, RTS, DTR, DSR, DCD, RI) */
-	at91_register_uart(AT91RM9200_ID_US1, 1, ATMEL_UART_CTS | ATMEL_UART_RTS
-			   | ATMEL_UART_DTR | ATMEL_UART_DSR | ATMEL_UART_DCD
-			   | ATMEL_UART_RI);
-
-	/* set serial console to ttyS0 (ie, DBGU) */
-	at91_set_serial_console(0);
 }
 
 static struct macb_platform_data __initdata dk_eth_data = {
@@ -90,12 +77,12 @@ static struct at91_cf_data __initdata dk_cf_data = {
 };
 
 #ifndef CONFIG_MTD_AT91_DATAFLASH_CARD
-static struct at91_mmc_data __initdata dk_mmc_data = {
-	.slot_b		= 0,
-	.wire4		= 1,
-	.det_pin	= -EINVAL,
-	.wp_pin		= -EINVAL,
-	.vcc_pin	= -EINVAL,
+static struct mci_platform_data __initdata dk_mci0_data = {
+	.slot[0] = {
+		.bus_width	= 4,
+		.detect_pin	= -EINVAL,
+		.wp_pin		= -EINVAL,
+	},
 };
 #endif
 
@@ -191,6 +178,13 @@ static struct gpio_led dk_leds[] = {
 static void __init dk_board_init(void)
 {
 	/* Serial */
+	/* DBGU on ttyS0. (Rx & Tx only) */
+	at91_register_uart(0, 0, 0);
+
+	/* USART1 on ttyS1. (Rx, Tx, CTS, RTS, DTR, DSR, DCD, RI) */
+	at91_register_uart(AT91RM9200_ID_US1, 1, ATMEL_UART_CTS | ATMEL_UART_RTS
+			   | ATMEL_UART_DTR | ATMEL_UART_DSR | ATMEL_UART_DCD
+			   | ATMEL_UART_RI);
 	at91_add_device_serial();
 	/* Ethernet */
 	at91_add_device_eth(&dk_eth_data);
@@ -211,7 +205,7 @@ static void __init dk_board_init(void)
 #else
 	/* MMC */
 	at91_set_gpio_output(AT91_PIN_PB7, 1);	/* this MMC card slot can optionally use SPI signaling (CS3). */
-	at91_add_device_mmc(0, &dk_mmc_data);
+	at91_add_device_mci(0, &dk_mci0_data);
 #endif
 	/* NAND */
 	at91_add_device_nand(&dk_nand_data);
@@ -225,8 +219,9 @@ static void __init dk_board_init(void)
 
 MACHINE_START(AT91RM9200DK, "Atmel AT91RM9200-DK")
 	/* Maintainer: SAN People/Atmel */
-	.timer		= &at91rm9200_timer,
+	.init_time	= at91rm9200_timer_init,
 	.map_io		= at91_map_io,
+	.handle_irq	= at91_aic_handle_irq,
 	.init_early	= dk_init_early,
 	.init_irq	= at91_init_irq_default,
 	.init_machine	= dk_board_init,

@@ -993,7 +993,7 @@ static void efx_sriov_reset_vf(struct efx_vf *vf, struct efx_buffer *buffer)
 			     FRF_AZ_EVQ_BUF_BASE_ID, buftbl);
 	efx_writeo_table(efx, &reg, FR_BZ_EVQ_PTR_TBL, abs_evq);
 	EFX_POPULATE_DWORD_1(ptr, FRF_AZ_EVQ_RPTR, 0);
-	efx_writed_table(efx, &ptr, FR_BZ_EVQ_RPTR, abs_evq);
+	efx_writed(efx, &ptr, FR_BZ_EVQ_RPTR + FR_BZ_EVQ_RPTR_STEP * abs_evq);
 
 	mutex_unlock(&vf->status_lock);
 }
@@ -1033,6 +1033,7 @@ efx_sriov_get_channel_name(struct efx_channel *channel, char *buf, size_t len)
 static const struct efx_channel_type efx_sriov_channel_type = {
 	.handle_no_channel	= efx_sriov_handle_no_channel,
 	.pre_probe		= efx_sriov_probe_channel,
+	.post_remove		= efx_channel_dummy_op_void,
 	.get_name		= efx_sriov_get_channel_name,
 	/* no copy operation; channel must not be reallocated */
 	.keep_eventq		= true,

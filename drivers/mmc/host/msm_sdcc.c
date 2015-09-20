@@ -42,8 +42,7 @@
 #include <asm/div64.h>
 #include <asm/sizes.h>
 
-#include <mach/mmc.h>
-#include <mach/msm_iomap.h>
+#include <linux/platform_data/mmc-msm_sdcc.h>
 #include <mach/dma.h>
 #include <mach/clk.h>
 

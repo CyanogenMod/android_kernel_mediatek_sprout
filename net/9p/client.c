@@ -76,6 +76,20 @@ inline int p9_is_proto_dotu(struct p9_client *clnt)
 }
 EXPORT_SYMBOL(p9_is_proto_dotu);
 
+/*
+ * Some error codes are taken directly from the server replies,
+ * make sure they are valid.
+ */
+static int safe_errno(int err)
+{
+	if ((err > 0) || (err < -MAX_ERRNO)) {
+		p9_debug(P9_DEBUG_ERROR, "Invalid error code %d\n", err);
+		return -EPROTO;
+	}
+	return err;
+}
+
+
 /* Interpret mount option for protocol version */
 static int get_protocol_version(char *s)
 {
@@ -548,36 +562,19 @@ static int p9_check_zc_errors(struct p9_client *c, struct p9_req_t *req,
 
 	if (!p9_is_proto_dotl(c)) {
 		/* Error is reported in string format */
-		uint16_t len;
-		/* 7 = header size for RERROR, 2 is the size of string len; */
-		int inline_len = in_hdrlen - (7 + 2);
+		int len;
+		/* 7 = header size for RERROR; */
+		int inline_len = in_hdrlen - 7;
 
-		/* Read the size of error string */
-		err = p9pdu_readf(req->rc, c->proto_version, "w", &len);
-		if (err)
-			goto out_err;
-
-		ename = kmalloc(len + 1, GFP_NOFS);
-		if (!ename) {
-			err = -ENOMEM;
+		len =  req->rc->size - req->rc->offset;
+		if (len > (P9_ZC_HDR_SZ - 7)) {
+			err = -EFAULT;
 			goto out_err;
 		}
-		if (len <= inline_len) {
-			/* We have error in protocol buffer itself */
-			if (pdu_read(req->rc, ename, len)) {
-				err = -EFAULT;
-				goto out_free;
 
-			}
-		} else {
-			/*
-			 *  Part of the data is in user space buffer.
-			 */
-			if (pdu_read(req->rc, ename, inline_len)) {
-				err = -EFAULT;
-				goto out_free;
-
-			}
+		ename = &req->rc->sdata[req->rc->offset];
+		if (len > inline_len) {
+			/* We have error in external buffer */
 			if (kern_buf) {
 				memcpy(ename + inline_len, uidata,
 				       len - inline_len);
@@ -586,19 +583,19 @@ static int p9_check_zc_errors(struct p9_client *c, struct p9_req_t *req,
 						     uidata, len - inline_len);
 				if (err) {
 					err = -EFAULT;
-					goto out_free;
+					goto out_err;
 				}
 			}
 		}
-		ename[len] = 0;
-		if (p9_is_proto_dotu(c)) {
-			/* For dotu we also have error code */
-			err = p9pdu_readf(req->rc,
-					  c->proto_version, "d", &ecode);
-			if (err)
-				goto out_free;
+		ename = NULL;
+		err = p9pdu_readf(req->rc, c->proto_version, "s?d",
+				  &ename, &ecode);
+		if (err)
+			goto out_err;
+
+		if (p9_is_proto_dotu(c))
 			err = -ecode;
-		}
+
 		if (!err || !IS_ERR_VALUE(err)) {
 			err = p9_errstr2errno(ename, strlen(ename));
 
@@ -614,8 +611,6 @@ static int p9_check_zc_errors(struct p9_client *c, struct p9_req_t *req,
 	}
 	return err;
 
-out_free:
-	kfree(ename);
 out_err:
 	p9_debug(P9_DEBUG_ERROR, "couldn't parse error%d\n", err);
 	return err;
@@ -782,7 +777,7 @@ again:
 		return req;
 reterr:
 	p9_free_req(c, req);
-	return ERR_PTR(err);
+	return ERR_PTR(safe_errno(err));
 }
 
 /**
@@ -833,7 +828,8 @@ static struct p9_req_t *p9_client_zc_rpc(struct p9_client *c, int8_t type,
 	if (err < 0) {
 		if (err == -EIO)
 			c->status = Disconnected;
-		goto reterr;
+		if (err != -ERESTARTSYS)
+			goto reterr;
 	}
 	if (req->status == REQ_STATUS_ERROR) {
 		p9_debug(P9_DEBUG_ERROR, "req_status error %d\n", req->t_err);
@@ -865,7 +861,7 @@ static struct p9_req_t *p9_client_zc_rpc(struct p9_client *c, int8_t type,
 		return req;
 reterr:
 	p9_free_req(c, req);
-	return ERR_PTR(err);
+	return ERR_PTR(safe_errno(err));
 }
 
 static struct p9_fid *p9_fid_create(struct p9_client *clnt)
@@ -1086,7 +1082,7 @@ void p9_client_begin_disconnect(struct p9_client *clnt)
 EXPORT_SYMBOL(p9_client_begin_disconnect);
 
 struct p9_fid *p9_client_attach(struct p9_client *clnt, struct p9_fid *afid,
-	char *uname, u32 n_uname, char *aname)
+	char *uname, kuid_t n_uname, char *aname)
 {
 	int err = 0;
 	struct p9_req_t *req;
@@ -1103,7 +1099,7 @@ struct p9_fid *p9_client_attach(struct p9_client *clnt, struct p9_fid *afid,
 		goto error;
 	}
 
-	req = p9_client_rpc(clnt, P9_TATTACH, "ddss?d", fid->fid,
+	req = p9_client_rpc(clnt, P9_TATTACH, "ddss?u", fid->fid,
 			afid ? afid->fid : P9_NOFID, uname, aname, n_uname);
 	if (IS_ERR(req)) {
 		err = PTR_ERR(req);
@@ -1256,7 +1252,7 @@ error:
 EXPORT_SYMBOL(p9_client_open);
 
 int p9_client_create_dotl(struct p9_fid *ofid, char *name, u32 flags, u32 mode,
-		gid_t gid, struct p9_qid *qid)
+		kgid_t gid, struct p9_qid *qid)
 {
 	int err = 0;
 	struct p9_client *clnt;
@@ -1265,13 +1261,14 @@ int p9_client_create_dotl(struct p9_fid *ofid, char *name, u32 flags, u32 mode,
 
 	p9_debug(P9_DEBUG_9P,
 			">>> TLCREATE fid %d name %s flags %d mode %d gid %d\n",
-			ofid->fid, name, flags, mode, gid);
+			ofid->fid, name, flags, mode,
+		 	from_kgid(&init_user_ns, gid));
 	clnt = ofid->clnt;
 
 	if (ofid->mode != -1)
 		return -EINVAL;
 
-	req = p9_client_rpc(clnt, P9_TLCREATE, "dsddd", ofid->fid, name, flags,
+	req = p9_client_rpc(clnt, P9_TLCREATE, "dsddg", ofid->fid, name, flags,
 			mode, gid);
 	if (IS_ERR(req)) {
 		err = PTR_ERR(req);
@@ -1344,7 +1341,7 @@ error:
 }
 EXPORT_SYMBOL(p9_client_fcreate);
 
-int p9_client_symlink(struct p9_fid *dfid, char *name, char *symtgt, gid_t gid,
+int p9_client_symlink(struct p9_fid *dfid, char *name, char *symtgt, kgid_t gid,
 		struct p9_qid *qid)
 {
 	int err = 0;
@@ -1355,7 +1352,7 @@ int p9_client_symlink(struct p9_fid *dfid, char *name, char *symtgt, gid_t gid,
 			dfid->fid, name, symtgt);
 	clnt = dfid->clnt;
 
-	req = p9_client_rpc(clnt, P9_TSYMLINK, "dssd", dfid->fid, name, symtgt,
+	req = p9_client_rpc(clnt, P9_TSYMLINK, "dssg", dfid->fid, name, symtgt,
 			gid);
 	if (IS_ERR(req)) {
 		err = PTR_ERR(req);
@@ -1530,7 +1527,7 @@ p9_client_read(struct p9_fid *fid, char *data, char __user *udata, u64 offset,
 
 
 	p9_debug(P9_DEBUG_9P, ">>> TREAD fid %d offset %llu %d\n",
-		   fid->fid, (long long unsigned) offset, count);
+		   fid->fid, (unsigned long long) offset, count);
 	err = 0;
 	clnt = fid->clnt;
 
@@ -1548,7 +1545,7 @@ p9_client_read(struct p9_fid *fid, char *data, char __user *udata, u64 offset,
 			kernel_buf = 1;
 			indata = data;
 		} else
-			indata = (char *)udata;
+			indata = (__force char *)udata;
 		/*
 		 * response header len is 11
 		 * PDU Header(7) + IO Size (4)
@@ -1605,7 +1602,7 @@ p9_client_write(struct p9_fid *fid, char *data, const char __user *udata,
 	struct p9_req_t *req;
 
 	p9_debug(P9_DEBUG_9P, ">>> TWRITE fid %d offset %llu count %d\n",
-				fid->fid, (long long unsigned) offset, count);
+				fid->fid, (unsigned long long) offset, count);
 	err = 0;
 	clnt = fid->clnt;
 
@@ -1696,7 +1693,9 @@ struct p9_wstat *p9_client_stat(struct p9_fid *fid)
 		(unsigned long long)ret->qid.path, ret->qid.version, ret->mode,
 		ret->atime, ret->mtime, (unsigned long long)ret->length,
 		ret->name, ret->uid, ret->gid, ret->muid, ret->extension,
-		ret->n_uid, ret->n_gid, ret->n_muid);
+		from_kuid(&init_user_ns, ret->n_uid),
+		from_kgid(&init_user_ns, ret->n_gid),
+		from_kuid(&init_user_ns, ret->n_muid));
 
 	p9_free_req(clnt, req);
 	return ret;
@@ -1750,8 +1749,10 @@ struct p9_stat_dotl *p9_client_getattr_dotl(struct p9_fid *fid,
 		"<<< st_btime_sec=%lld st_btime_nsec=%lld\n"
 		"<<< st_gen=%lld st_data_version=%lld",
 		ret->st_result_mask, ret->qid.type, ret->qid.path,
-		ret->qid.version, ret->st_mode, ret->st_nlink, ret->st_uid,
-		ret->st_gid, ret->st_rdev, ret->st_size, ret->st_blksize,
+		ret->qid.version, ret->st_mode, ret->st_nlink,
+		from_kuid(&init_user_ns, ret->st_uid),
+		from_kgid(&init_user_ns, ret->st_gid),
+		ret->st_rdev, ret->st_size, ret->st_blksize,
 		ret->st_blocks, ret->st_atime_sec, ret->st_atime_nsec,
 		ret->st_mtime_sec, ret->st_mtime_nsec, ret->st_ctime_sec,
 		ret->st_ctime_nsec, ret->st_btime_sec, ret->st_btime_nsec,
@@ -1814,7 +1815,9 @@ int p9_client_wstat(struct p9_fid *fid, struct p9_wstat *wst)
 		(unsigned long long)wst->qid.path, wst->qid.version, wst->mode,
 		wst->atime, wst->mtime, (unsigned long long)wst->length,
 		wst->name, wst->uid, wst->gid, wst->muid, wst->extension,
-		wst->n_uid, wst->n_gid, wst->n_muid);
+		from_kuid(&init_user_ns, wst->n_uid),
+		from_kgid(&init_user_ns, wst->n_gid),
+		from_kuid(&init_user_ns, wst->n_muid));
 
 	req = p9_client_rpc(clnt, P9_TWSTAT, "dwS", fid->fid, wst->size+2, wst);
 	if (IS_ERR(req)) {
@@ -1843,7 +1846,9 @@ int p9_client_setattr(struct p9_fid *fid, struct p9_iattr_dotl *p9attr)
 		"    valid=%x mode=%x uid=%d gid=%d size=%lld\n"
 		"    atime_sec=%lld atime_nsec=%lld\n"
 		"    mtime_sec=%lld mtime_nsec=%lld\n",
-		p9attr->valid, p9attr->mode, p9attr->uid, p9attr->gid,
+		p9attr->valid, p9attr->mode,
+		from_kuid(&init_user_ns, p9attr->uid),
+		from_kgid(&init_user_ns, p9attr->gid),
 		p9attr->size, p9attr->atime_sec, p9attr->atime_nsec,
 		p9attr->mtime_sec, p9attr->mtime_nsec);
 
@@ -2040,7 +2045,7 @@ int p9_client_readdir(struct p9_fid *fid, char *data, u32 count, u64 offset)
 	char *dataptr;
 
 	p9_debug(P9_DEBUG_9P, ">>> TREADDIR fid %d offset %llu count %d\n",
-				fid->fid, (long long unsigned) offset, count);
+				fid->fid, (unsigned long long) offset, count);
 
 	err = 0;
 	clnt = fid->clnt;
@@ -2092,7 +2097,7 @@ error:
 EXPORT_SYMBOL(p9_client_readdir);
 
 int p9_client_mknod_dotl(struct p9_fid *fid, char *name, int mode,
-			dev_t rdev, gid_t gid, struct p9_qid *qid)
+			dev_t rdev, kgid_t gid, struct p9_qid *qid)
 {
 	int err;
 	struct p9_client *clnt;
@@ -2102,7 +2107,7 @@ int p9_client_mknod_dotl(struct p9_fid *fid, char *name, int mode,
 	clnt = fid->clnt;
 	p9_debug(P9_DEBUG_9P, ">>> TMKNOD fid %d name %s mode %d major %d "
 		"minor %d\n", fid->fid, name, mode, MAJOR(rdev), MINOR(rdev));
-	req = p9_client_rpc(clnt, P9_TMKNOD, "dsdddd", fid->fid, name, mode,
+	req = p9_client_rpc(clnt, P9_TMKNOD, "dsdddg", fid->fid, name, mode,
 		MAJOR(rdev), MINOR(rdev), gid);
 	if (IS_ERR(req))
 		return PTR_ERR(req);
@@ -2123,7 +2128,7 @@ error:
 EXPORT_SYMBOL(p9_client_mknod_dotl);
 
 int p9_client_mkdir_dotl(struct p9_fid *fid, char *name, int mode,
-				gid_t gid, struct p9_qid *qid)
+				kgid_t gid, struct p9_qid *qid)
 {
 	int err;
 	struct p9_client *clnt;
@@ -2132,8 +2137,8 @@ int p9_client_mkdir_dotl(struct p9_fid *fid, char *name, int mode,
 	err = 0;
 	clnt = fid->clnt;
 	p9_debug(P9_DEBUG_9P, ">>> TMKDIR fid %d name %s mode %d gid %d\n",
-		 fid->fid, name, mode, gid);
-	req = p9_client_rpc(clnt, P9_TMKDIR, "dsdd", fid->fid, name, mode,
+		 fid->fid, name, mode, from_kgid(&init_user_ns, gid));
+	req = p9_client_rpc(clnt, P9_TMKDIR, "dsdg", fid->fid, name, mode,
 		gid);
 	if (IS_ERR(req))
 		return PTR_ERR(req);

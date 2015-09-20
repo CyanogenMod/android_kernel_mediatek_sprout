@@ -28,6 +28,7 @@ static const unsigned max_num_devices = 32;
 
 /*-- Configurable parameters */
 
+<<<<<<< HEAD
 /* Default zram disk size: 50% of total RAM */
 static const unsigned default_disksize_perc_ram = 50;	/* 25 */
 /* Let disk size be DISKSIZE_ALIGNMENT */
@@ -35,6 +36,8 @@ static const unsigned default_disksize_perc_ram = 50;	/* 25 */
 /* Is totalram_pages less than SUPPOSED_TOTALRAM? */
 #define SUPPOSED_TOTALRAM	0x20000			/* 512MB */
 
+=======
+>>>>>>> v3.10.88
 /*
  * Pages that compress to size greater than this are stored
  * uncompressed in memory.
@@ -100,8 +103,9 @@ struct zram_meta {
 struct zram {
 	struct zram_meta *meta;
 	spinlock_t stat64_lock;	/* protect 64-bit stats */
-	struct rw_semaphore lock; /* protect compression buffers and table
-				   * against concurrent read and writes */
+	struct rw_semaphore lock; /* protect compression buffers, table,
+				   * 32bit stat counters against concurrent
+				   * notifications, reads and writes */
 	struct request_queue *queue;
 	struct gendisk *disk;
 	int init_done;
@@ -126,9 +130,12 @@ extern void zram_reset_device(struct zram *zram);
 extern struct zram_meta *zram_meta_alloc(u64 disksize);
 extern void zram_meta_free(struct zram_meta *meta);
 extern void zram_init_device(struct zram *zram, struct zram_meta *meta);
+<<<<<<< HEAD
 
 /* Type for zram compression/decompression hooks */
 typedef int (*comp_hook) (const unsigned char *, size_t , unsigned char *, size_t *, void *);
 typedef int (*decomp_hook) (const unsigned char *, size_t , unsigned char *, size_t *);
+=======
+>>>>>>> v3.10.88
 
 #endif

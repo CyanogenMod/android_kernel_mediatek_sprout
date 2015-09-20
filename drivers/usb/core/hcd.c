@@ -22,6 +22,7 @@
  * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <linux/bcd.h>
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/kernel.h>
@@ -38,6 +39,7 @@
 #include <asm/unaligned.h>
 #include <linux/platform_device.h>
 #include <linux/workqueue.h>
+#include <linux/pm_runtime.h>
 
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
@@ -123,9 +125,8 @@ static inline int is_root_hub(struct usb_device *udev)
  */
 
 /*-------------------------------------------------------------------------*/
-
-#define KERNEL_REL	((LINUX_VERSION_CODE >> 16) & 0x0ff)
-#define KERNEL_VER	((LINUX_VERSION_CODE >> 8) & 0x0ff)
+#define KERNEL_REL	bin2bcd(((LINUX_VERSION_CODE >> 16) & 0x0ff))
+#define KERNEL_VER	bin2bcd(((LINUX_VERSION_CODE >> 8) & 0x0ff))
 
 /* usb 3.0 root hub device descriptor */
 static const u8 usb3_rh_dev_descriptor[18] = {
@@ -138,7 +139,7 @@ static const u8 usb3_rh_dev_descriptor[18] = {
 	0x03,       /*  __u8  bDeviceProtocol; USB 3.0 hub */
 	0x09,       /*  __u8  bMaxPacketSize0; 2^9 = 512 Bytes */
 
-	0x6b, 0x1d, /*  __le16 idVendor; Linux Foundation */
+	0x6b, 0x1d, /*  __le16 idVendor; Linux Foundation 0x1d6b */
 	0x03, 0x00, /*  __le16 idProduct; device 0x0003 */
 	KERNEL_VER, KERNEL_REL, /*  __le16 bcdDevice */
 
@@ -159,7 +160,7 @@ static const u8 usb2_rh_dev_descriptor [18] = {
 	0x00,       /*  __u8  bDeviceProtocol; [ usb 2.0 no TT ] */
 	0x40,       /*  __u8  bMaxPacketSize0; 64 Bytes */
 
-	0x6b, 0x1d, /*  __le16 idVendor; Linux Foundation */
+	0x6b, 0x1d, /*  __le16 idVendor; Linux Foundation 0x1d6b */
 	0x02, 0x00, /*  __le16 idProduct; device 0x0002 */
 	KERNEL_VER, KERNEL_REL, /*  __le16 bcdDevice */
 
@@ -182,7 +183,7 @@ static const u8 usb11_rh_dev_descriptor [18] = {
 	0x00,       /*  __u8  bDeviceProtocol; [ low/full speeds only ] */
 	0x40,       /*  __u8  bMaxPacketSize0; 64 Bytes */
 
-	0x6b, 0x1d, /*  __le16 idVendor; Linux Foundation */
+	0x6b, 0x1d, /*  __le16 idVendor; Linux Foundation 0x1d6b */
 	0x01, 0x00, /*  __le16 idProduct; device 0x0001 */
 	KERNEL_VER, KERNEL_REL, /*  __le16 bcdDevice */
 
@@ -619,6 +620,10 @@ nongeneric:
 		status = hcd->driver->hub_control (hcd,
 			typeReq, wValue, wIndex,
 			tbuf, wLength);
+
+		if (typeReq == GetHubDescriptor)
+			usb_hub_adjust_deviceremovable(hcd->self.root_hub,
+				(struct usb_hub_descriptor *)tbuf);
 		break;
 error:
 		/* "protocol stall" on error */
@@ -997,6 +1002,15 @@ static int register_root_hub(struct usb_hcd *hcd)
 				dev_name(&usb_dev->dev), retval);
 		return (retval < 0) ? retval : -EMSGSIZE;
 	}
+	if (usb_dev->speed == USB_SPEED_SUPER) {
+		retval = usb_get_bos_descriptor(usb_dev);
+		if (retval < 0) {
+			mutex_unlock(&usb_bus_list_lock);
+			dev_dbg(parent_dev, "can't read %s bos descriptor %d\n",
+					dev_name(&usb_dev->dev), retval);
+			return retval;
+		}
+	}
 
 	retval = usb_new_device (usb_dev);
 	if (retval) {
@@ -1016,6 +1030,49 @@ static int register_root_hub(struct usb_hcd *hcd)
 	return retval;
 }
 
+/*
+ * usb_hcd_start_port_resume - a root-hub port is sending a resume signal
+ * @bus: the bus which the root hub belongs to
+ * @portnum: the port which is being resumed
+ *
+ * HCDs should call this function when they know that a resume signal is
+ * being sent to a root-hub port.  The root hub will be prevented from
+ * going into autosuspend until usb_hcd_end_port_resume() is called.
+ *
+ * The bus's private lock must be held by the caller.
+ */
+void usb_hcd_start_port_resume(struct usb_bus *bus, int portnum)
+{
+	unsigned bit = 1 << portnum;
+
+	if (!(bus->resuming_ports & bit)) {
+		bus->resuming_ports |= bit;
+		pm_runtime_get_noresume(&bus->root_hub->dev);
+	}
+}
+EXPORT_SYMBOL_GPL(usb_hcd_start_port_resume);
+
+/*
+ * usb_hcd_end_port_resume - a root-hub port has stopped sending a resume signal
+ * @bus: the bus which the root hub belongs to
+ * @portnum: the port which is being resumed
+ *
+ * HCDs should call this function when they know that a resume signal has
+ * stopped being sent to a root-hub port.  The root hub will be allowed to
+ * autosuspend again.
+ *
+ * The bus's private lock must be held by the caller.
+ */
+void usb_hcd_end_port_resume(struct usb_bus *bus, int portnum)
+{
+	unsigned bit = 1 << portnum;
+
+	if (bus->resuming_ports & bit) {
+		bus->resuming_ports &= ~bit;
+		pm_runtime_put_noidle(&bus->root_hub->dev);
+	}
+}
+EXPORT_SYMBOL_GPL(usb_hcd_end_port_resume);
 
 /*-------------------------------------------------------------------------*/
 
@@ -1387,7 +1444,15 @@ int usb_hcd_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 	    && !(urb->transfer_flags & URB_NO_TRANSFER_DMA_MAP)) {
 		if (hcd->self.uses_dma) {
 			if (urb->num_sgs) {
-				int n = dma_map_sg(
+				int n;
+
+				/* We don't support sg for isoc transfers ! */
+				if (usb_endpoint_xfer_isoc(&urb->ep->desc)) {
+					WARN_ON(1);
+					return -EINVAL;
+				}
+
+				n = dma_map_sg(
 						hcd->self.controller,
 						urb->sg,
 						urb->num_sgs,
@@ -1528,6 +1593,7 @@ static int unlink1(struct usb_hcd *hcd, struct urb *urb, int status)
 int usb_hcd_unlink_urb (struct urb *urb, int status)
 {
 	struct usb_hcd		*hcd;
+	struct usb_device	*udev = urb->dev;
 	int			retval = -EIDRM;
 	unsigned long		flags;
 
@@ -1539,20 +1605,19 @@ int usb_hcd_unlink_urb (struct urb *urb, int status)
 	spin_lock_irqsave(&hcd_urb_unlink_lock, flags);
 	if (atomic_read(&urb->use_count) > 0) {
 		retval = 0;
-		usb_get_dev(urb->dev);
+		usb_get_dev(udev);
 	}
 	spin_unlock_irqrestore(&hcd_urb_unlink_lock, flags);
 	if (retval == 0) {
 		hcd = bus_to_hcd(urb->dev->bus);
 		retval = unlink1(hcd, urb, status);
-		usb_put_dev(urb->dev);
+		if (retval == 0)
+			retval = -EINPROGRESS;
+		else if (retval != -EIDRM && retval != -EBUSY)
+			dev_dbg(&udev->dev, "hcd_unlink_urb %p fail %d\n",
+					urb, retval);
+		usb_put_dev(udev);
 	}
-
-	if (retval == 0)
-		retval = -EINPROGRESS;
-	else if (retval != -EIDRM && retval != -EBUSY)
-		dev_dbg(&urb->dev->dev, "hcd_unlink_urb %p fail %d\n",
-				urb, retval);
 	return retval;
 }
 
@@ -1882,6 +1947,8 @@ int usb_alloc_streams(struct usb_interface *interface,
 		return -EINVAL;
 	if (dev->speed != USB_SPEED_SUPER)
 		return -EINVAL;
+	if (dev->state < USB_STATE_CONFIGURED)
+		return -ENODEV;
 
 	/* Streams only apply to bulk endpoints. */
 	for (i = 0; i < num_eps; i++)
@@ -2060,7 +2127,7 @@ int hcd_bus_resume(struct usb_device *rhdev, pm_message_t msg)
 
 #endif	/* CONFIG_PM */
 
-#ifdef	CONFIG_USB_SUSPEND
+#ifdef	CONFIG_PM_RUNTIME
 
 /* Workqueue routine for root-hub remote wakeup */
 static void hcd_resume_work(struct work_struct *work)
@@ -2095,7 +2162,7 @@ void usb_hcd_resume_root_hub (struct usb_hcd *hcd)
 }
 EXPORT_SYMBOL_GPL(usb_hcd_resume_root_hub);
 
-#endif	/* CONFIG_USB_SUSPEND */
+#endif	/* CONFIG_PM_RUNTIME */
 
 /*-------------------------------------------------------------------------*/
 
@@ -2271,7 +2338,7 @@ struct usb_hcd *usb_create_shared_hcd(const struct hc_driver *driver,
 	init_timer(&hcd->rh_timer);
 	hcd->rh_timer.function = rh_timer_func;
 	hcd->rh_timer.data = (unsigned long) hcd;
-#ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_PM_RUNTIME
 	INIT_WORK(&hcd->wakeup_work, hcd_resume_work);
 #endif
 
@@ -2346,6 +2413,14 @@ int usb_hcd_is_primary_hcd(struct usb_hcd *hcd)
 	return hcd == hcd->primary_hcd;
 }
 EXPORT_SYMBOL_GPL(usb_hcd_is_primary_hcd);
+
+int usb_hcd_find_raw_port_number(struct usb_hcd *hcd, int port1)
+{
+	if (!hcd->driver->find_raw_port_number)
+		return port1;
+
+	return hcd->driver->find_raw_port_number(hcd, port1);
+}
 
 static int usb_hcd_request_irqs(struct usb_hcd *hcd,
 		unsigned int irqnum, unsigned long irqflags)
@@ -2489,7 +2564,6 @@ int usb_add_hcd(struct usb_hcd *hcd,
 	}
 
 	/* starting here, usbcore will pay attention to this root hub */
-	rhdev->bus_mA = min(500u, hcd->power_budget);
 	if ((retval = register_root_hub(hcd)) != 0)
 		goto err_register_root_hub;
 
@@ -2518,7 +2592,7 @@ error_create_attr_group:
 	hcd->rh_registered = 0;
 	spin_unlock_irq(&hcd_root_hub_lock);
 
-#ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_PM_RUNTIME
 	cancel_work_sync(&hcd->wakeup_work);
 #endif
 	mutex_lock(&usb_bus_list_lock);
@@ -2573,7 +2647,7 @@ void usb_remove_hcd(struct usb_hcd *hcd)
 	hcd->rh_registered = 0;
 	spin_unlock_irq (&hcd_root_hub_lock);
 
-#ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_PM_RUNTIME
 	cancel_work_sync(&hcd->wakeup_work);
 #endif
 

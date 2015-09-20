@@ -290,6 +290,10 @@ static inline int cipso_v4_validate(const struct sk_buff *skb,
 	unsigned char err_offset = 0;
 	u8 opt_len = opt[1];
 	u8 opt_iter;
+<<<<<<< HEAD
+=======
+	u8 tag_len;
+>>>>>>> v3.10.88
 
 	if (opt_len < 8) {
 		err_offset = 1;
@@ -302,11 +306,20 @@ static inline int cipso_v4_validate(const struct sk_buff *skb,
 	}
 
 	for (opt_iter = 6; opt_iter < opt_len;) {
+<<<<<<< HEAD
 		if (opt[opt_iter + 1] > (opt_len - opt_iter)) {
 			err_offset = opt_iter + 1;
 			goto out;
 		}
 		opt_iter += opt[opt_iter + 1];
+=======
+		tag_len = opt[opt_iter + 1];
+		if ((tag_len == 0) || (opt[opt_iter + 1] > (opt_len - opt_iter))) {
+			err_offset = opt_iter + 1;
+			goto out;
+		}
+		opt_iter += tag_len;
+>>>>>>> v3.10.88
 	}
 
 out:

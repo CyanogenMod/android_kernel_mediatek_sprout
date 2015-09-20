@@ -34,6 +34,8 @@
 #include <linux/syscalls.h>
 #include <linux/buffer_head.h> /* __set_page_dirty_buffers */
 #include <linux/pagevec.h>
+#include <linux/timer.h>
+#include <linux/sched/rt.h>
 #include <trace/events/writeback.h>
 
 /*
@@ -136,7 +138,20 @@ unsigned long global_dirty_limit;
  * measured in page writeback completions.
  *
  */
-static struct prop_descriptor vm_completions;
+static struct fprop_global writeout_completions;
+
+static void writeout_period(unsigned long t);
+/* Timer for aging of writeout_completions */
+static struct timer_list writeout_period_timer =
+		TIMER_DEFERRED_INITIALIZER(writeout_period, 0, 0);
+static unsigned long writeout_period_time = 0;
+
+/*
+ * Length of period for aging writeout fractions of bdis. This is an
+ * arbitrarily chosen number. The longer the period, the slower fractions will
+ * reflect changes in current writeout rate.
+ */
+#define VM_COMPLETIONS_PERIOD_LEN (3*HZ)
 
 /*
  * Work out the current dirty-memory clamping and background writeout
@@ -174,6 +189,26 @@ static struct prop_descriptor vm_completions;
  * global dirtyable memory first.
  */
 
+/**
+ * zone_dirtyable_memory - number of dirtyable pages in a zone
+ * @zone: the zone
+ *
+ * Returns the zone's number of pages potentially available for dirty
+ * page cache.  This is the base value for the per-zone dirty limits.
+ */
+static unsigned long zone_dirtyable_memory(struct zone *zone)
+{
+	unsigned long nr_pages;
+
+	nr_pages = zone_page_state(zone, NR_FREE_PAGES);
+	nr_pages -= min(nr_pages, zone->dirty_balance_reserve);
+
+	nr_pages += zone_page_state(zone, NR_INACTIVE_FILE);
+	nr_pages += zone_page_state(zone, NR_ACTIVE_FILE);
+
+	return nr_pages;
+}
+
 static unsigned long highmem_dirtyable_memory(unsigned long total)
 {
 #ifdef CONFIG_HIGHMEM
@@ -182,9 +217,9 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
         unsigned long tmp = 0;
 
 	for_each_node_state(node, N_HIGH_MEMORY) {
-		struct zone *z =
-			&NODE_DATA(node)->node_zones[ZONE_HIGHMEM];
+		struct zone *z = &NODE_DATA(node)->node_zones[ZONE_HIGHMEM];
 
+<<<<<<< HEAD
                 // fix overflow issue
 		tmp = zone_page_state(z, NR_FREE_PAGES) +
 		     zone_reclaimable_pages(z);
@@ -194,6 +229,9 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
                     continue;
 		//x += zone_page_state(z, NR_FREE_PAGES) +
 		//     zone_reclaimable_pages(z) - z->dirty_balance_reserve;
+=======
+		x += zone_dirtyable_memory(z);
+>>>>>>> v3.10.88
 	}
 	/*
 	 * Unreclaimable memory (kernel memory or anonymous memory
@@ -225,15 +263,26 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
  * Returns the global number of pages potentially available for dirty
  * page cache.  This is the base value for the global dirty limits.
  */
-unsigned long global_dirtyable_memory(void)
+static unsigned long global_dirtyable_memory(void)
 {
 	unsigned long x;
 
+<<<<<<< HEAD
 	x = global_page_state(NR_FREE_PAGES) + global_reclaimable_pages();
 	x -= min(x, dirty_balance_reserve);
+=======
+	x = global_page_state(NR_FREE_PAGES);
+	x -= min(x, dirty_balance_reserve);
+
+	x += global_page_state(NR_INACTIVE_FILE);
+	x += global_page_state(NR_ACTIVE_FILE);
+>>>>>>> v3.10.88
 
 	if (!vm_highmem_is_dirtyable)
 		x -= highmem_dirtyable_memory(x);
+
+	/* Subtract min_free_kbytes */
+	x -= min_t(unsigned long, x, min_free_kbytes >> (PAGE_SHIFT - 10));
 
 	return x + 1;	/* Ensure that we never return 0 */
 }
@@ -280,6 +329,7 @@ void global_dirty_limits(unsigned long *pbackground, unsigned long *pdirty)
 }
 
 /**
+<<<<<<< HEAD
  * zone_dirtyable_memory - number of dirtyable pages in a zone
  * @zone: the zone
  *
@@ -306,6 +356,8 @@ static unsigned long zone_dirtyable_memory(struct zone *zone)
 }
 
 /**
+=======
+>>>>>>> v3.10.88
  * zone_dirty_limit - maximum number of dirty pages allowed in a zone
  * @zone: the zone
  *
@@ -346,34 +398,6 @@ bool zone_dirty_ok(struct zone *zone)
 	       zone_page_state(zone, NR_WRITEBACK) <= limit;
 }
 
-/*
- * couple the period to the dirty_ratio:
- *
- *   period/2 ~ roundup_pow_of_two(dirty limit)
- */
-static int calc_period_shift(void)
-{
-	unsigned long dirty_total;
-
-	if (vm_dirty_bytes)
-		dirty_total = vm_dirty_bytes / PAGE_SIZE;
-	else
-		dirty_total = (vm_dirty_ratio * global_dirtyable_memory()) /
-				100;
-	return 2 + ilog2(dirty_total - 1);
-}
-
-/*
- * update the period when the dirty threshold changes.
- */
-static void update_completion_period(void)
-{
-	int shift = calc_period_shift();
-	prop_change_shift(&vm_completions, shift);
-
-	writeback_set_ratelimit();
-}
-
 int dirty_background_ratio_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp,
 		loff_t *ppos)
@@ -407,7 +431,7 @@ int dirty_ratio_handler(struct ctl_table *table, int write,
 
 	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 	if (ret == 0 && write && vm_dirty_ratio != old_ratio) {
-		update_completion_period();
+		writeback_set_ratelimit();
 		vm_dirty_bytes = 0;
 	}
 	return ret;
@@ -422,10 +446,19 @@ int dirty_bytes_handler(struct ctl_table *table, int write,
 
 	ret = proc_doulongvec_minmax(table, write, buffer, lenp, ppos);
 	if (ret == 0 && write && vm_dirty_bytes != old_bytes) {
-		update_completion_period();
+		writeback_set_ratelimit();
 		vm_dirty_ratio = 0;
 	}
 	return ret;
+}
+
+static unsigned long wp_next_time(unsigned long cur_time)
+{
+	cur_time += VM_COMPLETIONS_PERIOD_LEN;
+	/* 0 has a special meaning... */
+	if (!cur_time)
+		return 1;
+	return cur_time;
 }
 
 /*
@@ -435,8 +468,19 @@ int dirty_bytes_handler(struct ctl_table *table, int write,
 static inline void __bdi_writeout_inc(struct backing_dev_info *bdi)
 {
 	__inc_bdi_stat(bdi, BDI_WRITTEN);
-	__prop_inc_percpu_max(&vm_completions, &bdi->completions,
-			      bdi->max_prop_frac);
+	__fprop_inc_percpu_max(&writeout_completions, &bdi->completions,
+			       bdi->max_prop_frac);
+	/* First event after period switching was turned off? */
+	if (!unlikely(writeout_period_time)) {
+		/*
+		 * We can race with other __bdi_writeout_inc calls here but
+		 * it does not cause any harm since the resulting time when
+		 * timer will fire and what is in writeout_period_time will be
+		 * roughly the same.
+		 */
+		writeout_period_time = wp_next_time(jiffies);
+		mod_timer(&writeout_period_timer, writeout_period_time);
+	}
 }
 
 void bdi_writeout_inc(struct backing_dev_info *bdi)
@@ -455,8 +499,30 @@ EXPORT_SYMBOL_GPL(bdi_writeout_inc);
 static void bdi_writeout_fraction(struct backing_dev_info *bdi,
 		long *numerator, long *denominator)
 {
-	prop_fraction_percpu(&vm_completions, &bdi->completions,
+	fprop_fraction_percpu(&writeout_completions, &bdi->completions,
 				numerator, denominator);
+}
+
+/*
+ * On idle system, we can be called long after we scheduled because we use
+ * deferred timers so count with missed periods.
+ */
+static void writeout_period(unsigned long t)
+{
+	int miss_periods = (jiffies - writeout_period_time) /
+						 VM_COMPLETIONS_PERIOD_LEN;
+
+	if (fprop_new_period(&writeout_completions, miss_periods + 1)) {
+		writeout_period_time = wp_next_time(writeout_period_time +
+				miss_periods * VM_COMPLETIONS_PERIOD_LEN);
+		mod_timer(&writeout_period_timer, writeout_period_time);
+	} else {
+		/*
+		 * Aging has zeroed all fractions. Stop wasting CPU on period
+		 * updates.
+		 */
+		writeout_period_time = 0;
+	}
 }
 
 /*
@@ -499,7 +565,7 @@ int bdi_set_max_ratio(struct backing_dev_info *bdi, unsigned max_ratio)
 		ret = -EINVAL;
 	} else {
 		bdi->max_ratio = max_ratio;
-		bdi->max_prop_frac = (PROP_FRAC_BASE * max_ratio) / 100;
+		bdi->max_prop_frac = (FPROP_FRAC_BASE * max_ratio) / 100;
 	}
 	spin_unlock_bh(&bdi_lock);
 
@@ -673,7 +739,7 @@ static unsigned long bdi_position_ratio(struct backing_dev_info *bdi,
 	 *     => fast response on large errors; small oscillation near setpoint
 	 */
 	setpoint = (freerun + limit) / 2;
-	x = div_s64((setpoint - dirty) << RATELIMIT_CALC_SHIFT,
+	x = div_s64(((s64)setpoint - (s64)dirty) << RATELIMIT_CALC_SHIFT,
 		    limit - setpoint + 1);
 	pos_ratio = x;
 	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
@@ -775,8 +841,11 @@ static void bdi_update_write_bandwidth(struct backing_dev_info *bdi,
 	 *                   bw * elapsed + write_bandwidth * (period - elapsed)
 	 * write_bandwidth = ---------------------------------------------------
 	 *                                          period
+	 *
+	 * @written may have decreased due to account_page_redirty().
+	 * Avoid underflowing @bw calculation.
 	 */
-	bw = written - bdi->written_stamp;
+	bw = written - min(written, bdi->written_stamp);
 	bw *= HZ;
 	if (unlikely(elapsed > period)) {
 		do_div(bw, elapsed);
@@ -840,7 +909,7 @@ static void global_update_bandwidth(unsigned long thresh,
 				    unsigned long now)
 {
 	static DEFINE_SPINLOCK(dirty_lock);
-	static unsigned long update_time;
+	static unsigned long update_time = INITIAL_JIFFIES;
 
 	/*
 	 * check locklessly first to optimize away locking for the most time
@@ -942,7 +1011,7 @@ static void bdi_update_dirty_ratelimit(struct backing_dev_info *bdi,
 	 *	bdi->dirty_ratelimit = balanced_dirty_ratelimit;
 	 *
 	 * However to get a more stable dirty_ratelimit, the below elaborated
-	 * code makes use of task_ratelimit to filter out sigular points and
+	 * code makes use of task_ratelimit to filter out singular points and
 	 * limit the step size.
 	 *
 	 * The below code essentially only uses the relative value of
@@ -965,7 +1034,7 @@ static void bdi_update_dirty_ratelimit(struct backing_dev_info *bdi,
 	 * feel and care are stable dirty rate and small position error.
 	 *
 	 * |task_ratelimit - dirty_ratelimit| is used to limit the step size
-	 * and filter out the sigular points of balanced_dirty_ratelimit. Which
+	 * and filter out the singular points of balanced_dirty_ratelimit. Which
 	 * keeps jumping around randomly and can even leap far away at times
 	 * due to the small 200ms estimation period of dirty_rate (we want to
 	 * keep that period small to reduce time lags).
@@ -1065,7 +1134,7 @@ static void bdi_update_bandwidth(struct backing_dev_info *bdi,
 }
 
 /*
- * After a task dirtied this many pages, balance_dirty_pages_ratelimited_nr()
+ * After a task dirtied this many pages, balance_dirty_pages_ratelimited()
  * will look to see if it needs to start dirty throttling.
  *
  * If dirty_poll_interval is too low, big NUMA machines will call the expensive
@@ -1081,11 +1150,11 @@ static unsigned long dirty_poll_interval(unsigned long dirty,
 	return 1;
 }
 
-static long bdi_max_pause(struct backing_dev_info *bdi,
-			  unsigned long bdi_dirty)
+static unsigned long bdi_max_pause(struct backing_dev_info *bdi,
+				   unsigned long bdi_dirty)
 {
-	long bw = bdi->avg_write_bandwidth;
-	long t;
+	unsigned long bw = bdi->avg_write_bandwidth;
+	unsigned long t;
 
 	/*
 	 * Limit pause time for small memory systems. If sleeping for too long
@@ -1097,7 +1166,7 @@ static long bdi_max_pause(struct backing_dev_info *bdi,
 	t = bdi_dirty / (1 + bw / roundup_pow_of_two(1 + HZ / 8));
 	t++;
 
-	return min_t(long, t, MAX_PAUSE);
+	return min_t(unsigned long, t, MAX_PAUSE);
 }
 
 static long bdi_min_pause(struct backing_dev_info *bdi,
@@ -1436,9 +1505,8 @@ static DEFINE_PER_CPU(int, bdp_ratelimits);
 DEFINE_PER_CPU(int, dirty_throttle_leaks) = 0;
 
 /**
- * balance_dirty_pages_ratelimited_nr - balance dirty memory state
+ * balance_dirty_pages_ratelimited - balance dirty memory state
  * @mapping: address_space which was dirtied
- * @nr_pages_dirtied: number of pages which the caller has just dirtied
  *
  * Processes which are dirtying memory should call in here once for each page
  * which was newly dirtied.  The function will periodically check the system's
@@ -1449,8 +1517,7 @@ DEFINE_PER_CPU(int, dirty_throttle_leaks) = 0;
  * limit we decrease the ratelimiting by a lot, to prevent individual processes
  * from overshooting the limit by (ratelimit_pages) each.
  */
-void balance_dirty_pages_ratelimited_nr(struct address_space *mapping,
-					unsigned long nr_pages_dirtied)
+void balance_dirty_pages_ratelimited(struct address_space *mapping)
 {
 	struct backing_dev_info *bdi = mapping->backing_dev_info;
 	int ratelimit;
@@ -1484,6 +1551,7 @@ void balance_dirty_pages_ratelimited_nr(struct address_space *mapping,
 	 */
 	p = &__get_cpu_var(dirty_throttle_leaks);
 	if (*p > 0 && current->nr_dirtied < ratelimit) {
+		unsigned long nr_pages_dirtied;
 		nr_pages_dirtied = min(*p, ratelimit - current->nr_dirtied);
 		*p -= nr_pages_dirtied;
 		current->nr_dirtied += nr_pages_dirtied;
@@ -1493,7 +1561,7 @@ void balance_dirty_pages_ratelimited_nr(struct address_space *mapping,
 	if (unlikely(current->nr_dirtied >= ratelimit))
 		balance_dirty_pages(mapping, current->nr_dirtied);
 }
-EXPORT_SYMBOL(balance_dirty_pages_ratelimited_nr);
+EXPORT_SYMBOL(balance_dirty_pages_ratelimited);
 
 void throttle_vm_writeout(gfp_t gfp_mask)
 {
@@ -1532,7 +1600,6 @@ int dirty_writeback_centisecs_handler(ctl_table *table, int write,
 	void __user *buffer, size_t *length, loff_t *ppos)
 {
 	proc_dointvec(table, write, buffer, length, ppos);
-	bdi_arm_supers_timer();
 	return 0;
 }
 
@@ -1596,16 +1663,25 @@ void writeback_set_ratelimit(void)
 	unsigned long background_thresh;
 	unsigned long dirty_thresh;
 	global_dirty_limits(&background_thresh, &dirty_thresh);
+	global_dirty_limit = dirty_thresh;
 	ratelimit_pages = dirty_thresh / (num_online_cpus() * 32);
 	if (ratelimit_pages < 16)
 		ratelimit_pages = 16;
 }
 
 static int __cpuinit
-ratelimit_handler(struct notifier_block *self, unsigned long u, void *v)
+ratelimit_handler(struct notifier_block *self, unsigned long action,
+		  void *hcpu)
 {
-	writeback_set_ratelimit();
-	return NOTIFY_DONE;
+
+	switch (action & ~CPU_TASKS_FROZEN) {
+	case CPU_ONLINE:
+	case CPU_DEAD:
+		writeback_set_ratelimit();
+		return NOTIFY_OK;
+	default:
+		return NOTIFY_DONE;
+	}
 }
 
 static struct notifier_block __cpuinitdata ratelimit_nb = {
@@ -1633,13 +1709,10 @@ static struct notifier_block __cpuinitdata ratelimit_nb = {
  */
 void __init page_writeback_init(void)
 {
-	int shift;
-
 	writeback_set_ratelimit();
 	register_cpu_notifier(&ratelimit_nb);
 
-	shift = calc_period_shift();
-	prop_descriptor_init(&vm_completions, shift);
+	fprop_global_init(&writeout_completions);
 }
 
 /**
@@ -1963,6 +2036,7 @@ int __set_page_dirty_no_writeback(struct page *page)
  */
 void account_page_dirtied(struct page *page, struct address_space *mapping)
 {
+<<<<<<< HEAD
 #ifdef FEATURE_STORAGE_PID_LOGGER
 		struct page_pid_logger *tmp_logger;
 		extern unsigned char *page_logger;
@@ -1983,6 +2057,10 @@ void account_page_dirtied(struct page *page, struct address_space *mapping)
 			//printk(KERN_INFO"account_page_dirtied pid1:%u pid2:%u pfn:%d \n", tmp_logger->pid1, tmp_logger->pid2, page_index );
 		}
 #endif
+=======
+	trace_writeback_dirty_page(page, mapping);
+
+>>>>>>> v3.10.88
 	if (mapping_cap_account_dirty(mapping)) {
 		__inc_zone_page_state(page, NR_FILE_DIRTY);
 		__inc_zone_page_state(page, NR_DIRTIED);
@@ -2026,11 +2104,12 @@ int __set_page_dirty_nobuffers(struct page *page)
 	if (!TestSetPageDirty(page)) {
 		struct address_space *mapping = page_mapping(page);
 		struct address_space *mapping2;
+		unsigned long flags;
 
 		if (!mapping)
 			return 1;
 
-		spin_lock_irq(&mapping->tree_lock);
+		spin_lock_irqsave(&mapping->tree_lock, flags);
 		mapping2 = page_mapping(page);
 		if (mapping2) { /* Race with truncate? */
 			BUG_ON(mapping2 != mapping);
@@ -2039,7 +2118,7 @@ int __set_page_dirty_nobuffers(struct page *page)
 			radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
 		}
-		spin_unlock_irq(&mapping->tree_lock);
+		spin_unlock_irqrestore(&mapping->tree_lock, flags);
 		if (mapping->host) {
 			/* !PageAnon && !swapper_space */
 			__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
@@ -2290,3 +2369,23 @@ int mapping_tagged(struct address_space *mapping, int tag)
 	return radix_tree_tagged(&mapping->page_tree, tag);
 }
 EXPORT_SYMBOL(mapping_tagged);
+
+/**
+ * wait_for_stable_page() - wait for writeback to finish, if necessary.
+ * @page:	The page to wait on.
+ *
+ * This function determines if the given page is related to a backing device
+ * that requires page contents to be held stable during writeback.  If so, then
+ * it will wait for any pending writeback to complete.
+ */
+void wait_for_stable_page(struct page *page)
+{
+	struct address_space *mapping = page_mapping(page);
+	struct backing_dev_info *bdi = mapping->backing_dev_info;
+
+	if (!bdi_cap_stable_pages_required(bdi))
+		return;
+
+	wait_on_page_writeback(page);
+}
+EXPORT_SYMBOL_GPL(wait_for_stable_page);

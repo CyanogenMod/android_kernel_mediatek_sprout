@@ -355,6 +355,7 @@ static int wanxl_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 			ifr->ifr_settings.size = size; /* data size wanted */
 			return -ENOBUFS;
 		}
+		memset(&line, 0, sizeof(line));
 		line.clock_type = get_status(port)->clocking;
 		line.clock_rate = 0;
 		line.loopback = 0;
@@ -557,8 +558,8 @@ static const struct net_device_ops wanxl_ops = {
 	.ndo_get_stats  = wanxl_get_stats,
 };
 
-static int __devinit wanxl_pci_init_one(struct pci_dev *pdev,
-					const struct pci_device_id *ent)
+static int wanxl_pci_init_one(struct pci_dev *pdev,
+			      const struct pci_device_id *ent)
 {
 	card_t *card;
 	u32 ramsize, stat;

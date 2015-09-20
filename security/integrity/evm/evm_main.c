@@ -26,6 +26,7 @@ int evm_initialized;
 
 char *evm_hmac = "hmac(sha1)";
 char *evm_hash = "sha1";
+int evm_hmac_version = CONFIG_EVM_HMAC_VERSION;
 
 char *evm_config_xattrnames[] = {
 #ifdef CONFIG_SECURITY_SELINUX
@@ -33,6 +34,9 @@ char *evm_config_xattrnames[] = {
 #endif
 #ifdef CONFIG_SECURITY_SMACK
 	XATTR_NAME_SMACK,
+#endif
+#ifdef CONFIG_IMA_APPRAISE
+	XATTR_NAME_IMA,
 #endif
 	XATTR_NAME_CAPS,
 	NULL
@@ -271,12 +275,23 @@ static int evm_protect_xattr(struct dentry *dentry, const char *xattr_name,
  * @xattr_value: pointer to the new extended attribute value
  * @xattr_value_len: pointer to the new extended attribute value length
  *
- * Updating 'security.evm' requires CAP_SYS_ADMIN privileges and that
- * the current value is valid.
+ * Before allowing the 'security.evm' protected xattr to be updated,
+ * verify the existing value is valid.  As only the kernel should have
+ * access to the EVM encrypted key needed to calculate the HMAC, prevent
+ * userspace from writing HMAC value.  Writing 'security.evm' requires
+ * requires CAP_SYS_ADMIN privileges.
  */
 int evm_inode_setxattr(struct dentry *dentry, const char *xattr_name,
 		       const void *xattr_value, size_t xattr_value_len)
 {
+	const struct evm_ima_xattr_data *xattr_data = xattr_value;
+
+	if (strcmp(xattr_name, XATTR_NAME_EVM) == 0) {
+		if (!xattr_value_len)
+			return -EINVAL;
+		if (xattr_data->type != EVM_IMA_XATTR_DIGSIG)
+			return -EPERM;
+	}
 	return evm_protect_xattr(dentry, xattr_name, xattr_value,
 				 xattr_value_len);
 }
@@ -422,15 +437,6 @@ static int __init init_evm(void)
 	return 0;
 err:
 	return error;
-}
-
-static void __exit cleanup_evm(void)
-{
-	evm_cleanup_secfs();
-	if (hmac_tfm)
-		crypto_free_shash(hmac_tfm);
-	if (hash_tfm)
-		crypto_free_shash(hash_tfm);
 }
 
 /*

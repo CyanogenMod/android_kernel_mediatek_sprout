@@ -48,7 +48,7 @@ again:
 }
 
 /*
- * Allocate the 16 legacy interrupts for i8259 devices.  This happens early
+ * Allocate the 16 legacy interrupts for i8259 devices.	 This happens early
  * in the kernel initialization so treating allocation failure as BUG() is
  * ok.
  */
@@ -110,7 +110,7 @@ void __init init_IRQ(void)
 #endif
 }
 
-#ifdef DEBUG_STACKOVERFLOW
+#ifdef CONFIG_DEBUG_STACKOVERFLOW
 static inline void check_stack_overflow(void)
 {
 	unsigned long sp;

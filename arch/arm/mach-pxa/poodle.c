@@ -25,6 +25,7 @@
 #include <linux/gpio.h>
 #include <linux/i2c.h>
 #include <linux/i2c/pxa-i2c.h>
+#include <linux/regulator/machine.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/spi/pxa2xx_spi.h>
@@ -40,11 +41,11 @@
 #include <asm/mach/irq.h>
 
 #include <mach/pxa25x.h>
-#include <mach/mmc.h>
+#include <linux/platform_data/mmc-pxamci.h>
 #include <mach/udc.h>
-#include <mach/irda.h>
+#include <linux/platform_data/irda-pxaficp.h>
 #include <mach/poodle.h>
-#include <mach/pxafb.h>
+#include <linux/platform_data/video-pxafb.h>
 
 #include <asm/hardware/scoop.h>
 #include <asm/hardware/locomo.h>
@@ -452,6 +453,7 @@ static void __init poodle_init(void)
 	pxa_set_i2c_info(NULL);
 	i2c_register_board_info(0, ARRAY_AND_SIZE(poodle_i2c_devices));
 	poodle_init_spi();
+	regulator_has_full_constraints();
 }
 
 static void __init fixup_poodle(struct tag *tags, char **cmdline,
@@ -469,7 +471,7 @@ MACHINE_START(POODLE, "SHARP Poodle")
 	.nr_irqs	= POODLE_NR_IRQS,	/* 4 for LoCoMo */
 	.init_irq	= pxa25x_init_irq,
 	.handle_irq	= pxa25x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= poodle_init,
 	.restart	= pxa_restart,
 MACHINE_END

@@ -1,7 +1,7 @@
 /*
  * Mini SCLP driver.
  *
- * Copyright IBM Corp. 2004,2009
+ * Copyright IBM Corp. 2004, 2009
  *
  *   Author(s):	Peter Oberparleiter <Peter.Oberparleiter@de.ibm.com>,
  *		Heiko Carstens <heiko.carstens@de.ibm.com>,
@@ -44,6 +44,12 @@ _sclp_wait_int:
 #endif
 	mvc	.LoldpswS1-.LbaseS1(16,%r13),0(%r8)
 	mvc	0(16,%r8),0(%r9)
+#ifdef CONFIG_64BIT
+	epsw	%r6,%r7				# set current addressing mode
+	nill	%r6,0x1				# in new psw (31 or 64 bit mode)
+	nilh	%r7,0x8000
+	stm	%r6,%r7,0(%r8)
+#endif
 	lhi	%r6,0x0200			# cr mask for ext int (cr0.54)
 	ltr	%r2,%r2
 	jz	.LsetctS1
@@ -87,7 +93,7 @@ _sclp_wait_int:
 	.long	0x00080000, 0x80000000+.LwaitS1	# PSW to handle ext int
 #ifdef CONFIG_64BIT
 .LextpswS1_64:
-	.quad	0x0000000180000000, .LwaitS1	# PSW to handle ext int, 64 bit
+	.quad	0, .LwaitS1			# PSW to handle ext int, 64 bit
 #endif
 .LwaitpswS1:
 	.long	0x010a0000, 0x00000000+.LloopS1	# PSW to wait for ext int
@@ -219,7 +225,7 @@ _sclp_print:
 	ahi	%r2,1
 	ltr	%r0,%r0				# end of string?
 	jz	.LfinalizemtoS4
-	chi	%r0,0x15			# end of line (NL)?
+	chi	%r0,0x0a			# end of line (NL)?
 	jz	.LfinalizemtoS4
 	stc	%r0,0(%r6,%r7)			# copy to mto
 	la	%r11,0(%r6,%r7)
@@ -270,6 +276,8 @@ ENTRY(_sclp_print_early)
 	jno	.Lesa2
 	ahi	%r15,-80
 	stmh	%r6,%r15,96(%r15)		# store upper register halves
+	basr	%r13,0
+	lmh	%r0,%r15,.Lzeroes-.(%r13)	# clear upper register halves
 .Lesa2:
 #endif
 	lr	%r10,%r2			# save string pointer
@@ -293,6 +301,8 @@ ENTRY(_sclp_print_early)
 #endif
 	lm	%r6,%r15,120(%r15)		# restore registers
 	br	%r14
+.Lzeroes:
+	.fill	64,4,0
 
 .LwritedataS4:
 	.long	0x00760005			# SCLP command for write data

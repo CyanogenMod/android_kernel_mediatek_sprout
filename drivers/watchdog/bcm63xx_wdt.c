@@ -236,7 +236,7 @@ static struct miscdevice bcm63xx_wdt_miscdev = {
 };
 
 
-static int __devinit bcm63xx_wdt_probe(struct platform_device *pdev)
+static int bcm63xx_wdt_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct resource *r;
@@ -286,7 +286,7 @@ unmap:
 	return ret;
 }
 
-static int __devexit bcm63xx_wdt_remove(struct platform_device *pdev)
+static int bcm63xx_wdt_remove(struct platform_device *pdev)
 {
 	if (!nowayout)
 		bcm63xx_wdt_pause();
@@ -302,9 +302,9 @@ static void bcm63xx_wdt_shutdown(struct platform_device *pdev)
 	bcm63xx_wdt_pause();
 }
 
-static struct platform_driver bcm63xx_wdt = {
+static struct platform_driver bcm63xx_wdt_driver = {
 	.probe	= bcm63xx_wdt_probe,
-	.remove = __devexit_p(bcm63xx_wdt_remove),
+	.remove = bcm63xx_wdt_remove,
 	.shutdown = bcm63xx_wdt_shutdown,
 	.driver = {
 		.owner = THIS_MODULE,
@@ -312,7 +312,7 @@ static struct platform_driver bcm63xx_wdt = {
 	}
 };
 
-module_platform_driver(bcm63xx_wdt);
+module_platform_driver(bcm63xx_wdt_driver);
 
 MODULE_AUTHOR("Miguel Gaio <miguel.gaio@efixo.com>");
 MODULE_AUTHOR("Florian Fainelli <florian@openwrt.org>");

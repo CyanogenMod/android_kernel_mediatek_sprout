@@ -1,5 +1,5 @@
 /*
- * Data Technology Inc. ESPT-GIGA board suport
+ * Data Technology Inc. ESPT-GIGA board support
  *
  * Copyright (C) 2008, 2009 Renesas Solutions Corp.
  * Copyright (C) 2008, 2009 Nobuhiro Iwamatsu <iwamatsu.nobuhiro@renesas.com>
@@ -14,6 +14,7 @@
 #include <linux/mtd/physmap.h>
 #include <linux/io.h>
 #include <linux/sh_eth.h>
+#include <linux/sh_intc.h>
 #include <asm/machvec.h>
 #include <asm/sizes.h>
 
@@ -71,7 +72,7 @@ static struct resource sh_eth_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	}, {
 
-		.start  = 57,   /* irq number */
+		.start  = evt2irq(0x920),   /* irq number */
 		.flags  = IORESOURCE_IRQ,
 	},
 };

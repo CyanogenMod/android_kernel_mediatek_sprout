@@ -163,6 +163,9 @@ extern void swsusp_free(void);
 extern int swsusp_read(unsigned int *flags_p);
 extern int swsusp_write(unsigned int flags);
 extern void swsusp_close(fmode_t);
+#ifdef CONFIG_SUSPEND
+extern int swsusp_unmark(void);
+#endif
 
 /* kernel/power/block_io.c */
 extern struct block_device *hib_resume_bdev;
@@ -179,10 +182,14 @@ extern void swsusp_show_speed(struct timeval *, struct timeval *,
 				unsigned int, char *);
 
 #ifdef CONFIG_SUSPEND
-/* kernel/power/suspend.c */
-extern const char *const pm_states[];
+struct pm_sleep_state {
+	const char *label;
+	suspend_state_t state;
+};
 
-extern bool valid_state(suspend_state_t state);
+/* kernel/power/suspend.c */
+extern struct pm_sleep_state pm_states[];
+
 extern int suspend_devices_and_enter(suspend_state_t state);
 extern int enter_state(suspend_state_t state);
 #else /* !CONFIG_SUSPEND */
@@ -190,8 +197,11 @@ static inline int suspend_devices_and_enter(suspend_state_t state)
 {
 	return -ENOSYS;
 }
+<<<<<<< HEAD
 static inline int enter_state(suspend_state_t state) { return -ENOSYS; }
 static inline bool valid_state(suspend_state_t state) { return false; }
+=======
+>>>>>>> v3.10.88
 #endif /* !CONFIG_SUSPEND */
 
 #ifdef CONFIG_PM_TEST_SUSPEND

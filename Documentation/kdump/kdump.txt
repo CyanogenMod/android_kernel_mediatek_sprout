@@ -86,7 +86,7 @@ There is also a gitweb interface available at
 http://www.kernel.org/git/?p=utils/kernel/kexec/kexec-tools.git
 
 More information about kexec-tools can be found at
-http://www.kernel.org/pub/linux/utils/kernel/kexec/README.html
+http://horms.net/projects/kexec/
 
 3) Unpack the tarball with the tar command, as follows:
 
@@ -297,6 +297,7 @@ Boot into System Kernel
    On ia64, 256M@256M is a generous value that typically works.
    The region may be automatically placed on ia64, see the
    dump-capture kernel config option notes above.
+   If use sparse memory, the size should be rounded to GRANULE boundaries.
 
    On s390x, typically use "crashkernel=xxM". The value of xx is dependent
    on the memory consumption of the kdump system. In general this is not

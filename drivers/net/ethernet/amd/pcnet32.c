@@ -494,19 +494,15 @@ static void pcnet32_realloc_tx_ring(struct net_device *dev,
 	}
 	memset(new_tx_ring, 0, sizeof(struct pcnet32_tx_head) * (1 << size));
 
-	new_dma_addr_list = kcalloc((1 << size), sizeof(dma_addr_t),
-				GFP_ATOMIC);
-	if (!new_dma_addr_list) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	new_dma_addr_list = kcalloc(1 << size, sizeof(dma_addr_t),
+				    GFP_ATOMIC);
+	if (!new_dma_addr_list)
 		goto free_new_tx_ring;
-	}
 
-	new_skb_list = kcalloc((1 << size), sizeof(struct sk_buff *),
-				GFP_ATOMIC);
-	if (!new_skb_list) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	new_skb_list = kcalloc(1 << size, sizeof(struct sk_buff *),
+			       GFP_ATOMIC);
+	if (!new_skb_list)
 		goto free_new_lists;
-	}
 
 	kfree(lp->tx_skbuff);
 	kfree(lp->tx_dma_addr);
@@ -564,19 +560,14 @@ static void pcnet32_realloc_rx_ring(struct net_device *dev,
 	}
 	memset(new_rx_ring, 0, sizeof(struct pcnet32_rx_head) * (1 << size));
 
-	new_dma_addr_list = kcalloc((1 << size), sizeof(dma_addr_t),
-				GFP_ATOMIC);
-	if (!new_dma_addr_list) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	new_dma_addr_list = kcalloc(1 << size, sizeof(dma_addr_t), GFP_ATOMIC);
+	if (!new_dma_addr_list)
 		goto free_new_rx_ring;
-	}
 
-	new_skb_list = kcalloc((1 << size), sizeof(struct sk_buff *),
-				GFP_ATOMIC);
-	if (!new_skb_list) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	new_skb_list = kcalloc(1 << size, sizeof(struct sk_buff *),
+			       GFP_ATOMIC);
+	if (!new_skb_list)
 		goto free_new_lists;
-	}
 
 	/* first copy the current receive buffers */
 	overlap = min(size, lp->rx_ring_size);
@@ -1175,7 +1166,6 @@ static void pcnet32_rx_entry(struct net_device *dev,
 		skb = netdev_alloc_skb(dev, pkt_len + NET_IP_ALIGN);
 
 	if (skb == NULL) {
-		netif_err(lp, drv, dev, "Memory squeeze, dropping packet\n");
 		dev->stats.rx_dropped++;
 		return;
 	}
@@ -1443,7 +1433,7 @@ static const struct ethtool_ops pcnet32_ethtool_ops = {
 /* only probes for non-PCI devices, the rest are handled by
  * pci_register_driver via pcnet32_probe_pci */
 
-static void __devinit pcnet32_probe_vlbus(unsigned int *pcnet32_portlist)
+static void pcnet32_probe_vlbus(unsigned int *pcnet32_portlist)
 {
 	unsigned int *port, ioaddr;
 
@@ -1462,7 +1452,7 @@ static void __devinit pcnet32_probe_vlbus(unsigned int *pcnet32_portlist)
 	}
 }
 
-static int __devinit
+static int
 pcnet32_probe_pci(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	unsigned long ioaddr;
@@ -1521,12 +1511,12 @@ static const struct net_device_ops pcnet32_netdev_ops = {
  *  Called from both pcnet32_probe_vlbus and pcnet_probe_pci.
  *  pdev will be NULL when called from pcnet32_probe_vlbus.
  */
-static int __devinit
+static int
 pcnet32_probe1(unsigned long ioaddr, int shared, struct pci_dev *pdev)
 {
 	struct pcnet32_private *lp;
 	int i, media;
-	int fdx, mii, fset, dxsuflo;
+	int fdx, mii, fset, dxsuflo, sram;
 	int chip_version;
 	char *chipname;
 	struct net_device *dev;
@@ -1563,7 +1553,7 @@ pcnet32_probe1(unsigned long ioaddr, int shared, struct pci_dev *pdev)
 	}
 
 	/* initialize variables */
-	fdx = mii = fset = dxsuflo = 0;
+	fdx = mii = fset = dxsuflo = sram = 0;
 	chip_version = (chip_version >> 12) & 0xffff;
 
 	switch (chip_version) {
@@ -1596,6 +1586,7 @@ pcnet32_probe1(unsigned long ioaddr, int shared, struct pci_dev *pdev)
 		chipname = "PCnet/FAST III 79C973";	/* PCI */
 		fdx = 1;
 		mii = 1;
+		sram = 1;
 		break;
 	case 0x2626:
 		chipname = "PCnet/Home 79C978";	/* PCI */
@@ -1619,6 +1610,7 @@ pcnet32_probe1(unsigned long ioaddr, int shared, struct pci_dev *pdev)
 		chipname = "PCnet/FAST III 79C975";	/* PCI */
 		fdx = 1;
 		mii = 1;
+		sram = 1;
 		break;
 	case 0x2628:
 		chipname = "PCnet/PRO 79C976";
@@ -1645,6 +1637,31 @@ pcnet32_probe1(unsigned long ioaddr, int shared, struct pci_dev *pdev)
 		a->write_csr(ioaddr, 80,
 			     (a->read_csr(ioaddr, 80) & 0x0C00) | 0x0c00);
 		dxsuflo = 1;
+	}
+
+	/*
+	 * The Am79C973/Am79C975 controllers come with 12K of SRAM
+	 * which we can use for the Tx/Rx buffers but most importantly,
+	 * the use of SRAM allow us to use the BCR18:NOUFLO bit to avoid
+	 * Tx fifo underflows.
+	 */
+	if (sram) {
+		/*
+		 * The SRAM is being configured in two steps. First we
+		 * set the SRAM size in the BCR25:SRAM_SIZE bits. According
+		 * to the datasheet, each bit corresponds to a 512-byte
+		 * page so we can have at most 24 pages. The SRAM_SIZE
+		 * holds the value of the upper 8 bits of the 16-bit SRAM size.
+		 * The low 8-bits start at 0x00 and end at 0xff. So the
+		 * address range is from 0x0000 up to 0x17ff. Therefore,
+		 * the SRAM_SIZE is set to 0x17. The next step is to set
+		 * the BCR26:SRAM_BND midway through so the Tx and Rx
+		 * buffers can share the SRAM equally.
+		 */
+		a->write_bcr(ioaddr, 25, 0x17);
+		a->write_bcr(ioaddr, 26, 0xc);
+		/* And finally enable the NOUFLO bit */
+		a->write_bcr(ioaddr, 18, a->read_bcr(ioaddr, 18) | (1 << 11));
 	}
 
 	dev = alloc_etherdev(sizeof(*lp));
@@ -1688,10 +1705,9 @@ pcnet32_probe1(unsigned long ioaddr, int shared, struct pci_dev *pdev)
 			memcpy(dev->dev_addr, promaddr, 6);
 		}
 	}
-	memcpy(dev->perm_addr, dev->dev_addr, dev->addr_len);
 
 	/* if the ethernet address is not valid, force to 00:00:00:00:00:00 */
-	if (!is_valid_ether_addr(dev->perm_addr))
+	if (!is_valid_ether_addr(dev->dev_addr))
 		memset(dev->dev_addr, 0, ETH_ALEN);
 
 	if (pcnet32_debug & NETIF_MSG_PROBE) {
@@ -1934,31 +1950,23 @@ static int pcnet32_alloc_ring(struct net_device *dev, const char *name)
 
 	lp->tx_dma_addr = kcalloc(lp->tx_ring_size, sizeof(dma_addr_t),
 				  GFP_ATOMIC);
-	if (!lp->tx_dma_addr) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	if (!lp->tx_dma_addr)
 		return -ENOMEM;
-	}
 
 	lp->rx_dma_addr = kcalloc(lp->rx_ring_size, sizeof(dma_addr_t),
 				  GFP_ATOMIC);
-	if (!lp->rx_dma_addr) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	if (!lp->rx_dma_addr)
 		return -ENOMEM;
-	}
 
 	lp->tx_skbuff = kcalloc(lp->tx_ring_size, sizeof(struct sk_buff *),
 				GFP_ATOMIC);
-	if (!lp->tx_skbuff) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	if (!lp->tx_skbuff)
 		return -ENOMEM;
-	}
 
 	lp->rx_skbuff = kcalloc(lp->rx_ring_size, sizeof(struct sk_buff *),
 				GFP_ATOMIC);
-	if (!lp->rx_skbuff) {
-		netif_err(lp, drv, dev, "Memory allocation failed\n");
+	if (!lp->rx_skbuff)
 		return -ENOMEM;
-	}
 
 	return 0;
 }
@@ -2823,7 +2831,7 @@ static int pcnet32_pm_resume(struct pci_dev *pdev)
 	return 0;
 }
 
-static void __devexit pcnet32_remove_one(struct pci_dev *pdev)
+static void pcnet32_remove_one(struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
 
@@ -2844,7 +2852,7 @@ static void __devexit pcnet32_remove_one(struct pci_dev *pdev)
 static struct pci_driver pcnet32_driver = {
 	.name = DRV_NAME,
 	.probe = pcnet32_probe_pci,
-	.remove = __devexit_p(pcnet32_remove_one),
+	.remove = pcnet32_remove_one,
 	.id_table = pcnet32_pci_tbl,
 	.suspend = pcnet32_pm_suspend,
 	.resume = pcnet32_pm_resume,

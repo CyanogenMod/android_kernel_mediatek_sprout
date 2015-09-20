@@ -1,12 +1,8 @@
 #ifndef _M68K_SIGNAL_H
 #define _M68K_SIGNAL_H
 
-#include <linux/types.h>
+#include <uapi/asm/signal.h>
 
-/* Avoid too many header ordering problems.  */
-struct siginfo;
-
-#ifdef __KERNEL__
 /* Most things should be clean enough to redefine this at will, if care
    is taken to make libc match.  */
 
@@ -20,6 +16,7 @@ typedef struct {
 	unsigned long sig[_NSIG_WORDS];
 } sigset_t;
 
+<<<<<<< HEAD
 #else
 /* Here we must cater to libcs that poke about in kernel headers.  */
 
@@ -149,6 +146,10 @@ typedef struct sigaltstack {
 } stack_t;
 
 #ifdef __KERNEL__
+=======
+#define __ARCH_HAS_SA_RESTORER
+
+>>>>>>> v3.10.88
 #include <asm/sigcontext.h>
 
 #ifndef CONFIG_CPU_HAS_NO_BITFIELDS
@@ -202,12 +203,9 @@ static inline int sigfindinword(unsigned long word)
 
 #endif /* !CONFIG_CPU_HAS_NO_BITFIELDS */
 
-#ifdef __uClinux__
-#define ptrace_signal_deliver(regs, cookie) do { } while (0)
-#else
-struct pt_regs;
-extern void ptrace_signal_deliver(struct pt_regs *regs, void *cookie);
+#ifndef __uClinux__
+extern void ptrace_signal_deliver(void);
+#define ptrace_signal_deliver ptrace_signal_deliver
 #endif /* __uClinux__ */
 
-#endif /* __KERNEL__ */
 #endif /* _M68K_SIGNAL_H */

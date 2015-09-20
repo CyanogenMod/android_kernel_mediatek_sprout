@@ -34,9 +34,15 @@
 #include <sys/fcntl.h>
 #include <sys/mount.h>
 #include <sys/statfs.h>
+<<<<<<< HEAD
 #include "../../include/linux/magic.h"
 #include "../../include/linux/kernel-page-flags.h"
 
+=======
+#include "../../include/uapi/linux/magic.h"
+#include "../../include/uapi/linux/kernel-page-flags.h"
+#include <lk/debugfs.h>
+>>>>>>> v3.10.88
 
 #ifndef MAX_PATH
 # define MAX_PATH 256
@@ -178,7 +184,7 @@ static int		kpageflags_fd;
 static int		opt_hwpoison;
 static int		opt_unpoison;
 
-static char		hwpoison_debug_fs[MAX_PATH+1];
+static char		*hwpoison_debug_fs;
 static int		hwpoison_inject_fd;
 static int		hwpoison_forget_fd;
 
@@ -300,7 +306,7 @@ static char *page_flag_name(uint64_t flags)
 {
 	static char buf[65];
 	int present;
-	int i, j;
+	size_t i, j;
 
 	for (i = 0, j = 0; i < ARRAY_SIZE(page_flag_names); i++) {
 		present = (flags >> i) & 1;
@@ -318,7 +324,7 @@ static char *page_flag_name(uint64_t flags)
 static char *page_flag_longname(uint64_t flags)
 {
 	static char buf[1024];
-	int i, n;
+	size_t i, n;
 
 	for (i = 0, n = 0; i < ARRAY_SIZE(page_flag_names); i++) {
 		if (!page_flag_names[i])
@@ -376,7 +382,7 @@ static void show_page(unsigned long voffset,
 
 static void show_summary(void)
 {
-	int i;
+	size_t i;
 
 	printf("             flags\tpage-count       MB"
 		"  symbolic-flags\t\t\tlong-symbolic-flags\n");
@@ -458,81 +464,6 @@ static uint64_t kpageflags_flags(uint64_t flags)
 	return flags;
 }
 
-/* verify that a mountpoint is actually a debugfs instance */
-static int debugfs_valid_mountpoint(const char *debugfs)
-{
-	struct statfs st_fs;
-
-	if (statfs(debugfs, &st_fs) < 0)
-		return -ENOENT;
-	else if (st_fs.f_type != (long) DEBUGFS_MAGIC)
-		return -ENOENT;
-
-	return 0;
-}
-
-/* find the path to the mounted debugfs */
-static const char *debugfs_find_mountpoint(void)
-{
-	const char **ptr;
-	char type[100];
-	FILE *fp;
-
-	ptr = debugfs_known_mountpoints;
-	while (*ptr) {
-		if (debugfs_valid_mountpoint(*ptr) == 0) {
-			strcpy(hwpoison_debug_fs, *ptr);
-			return hwpoison_debug_fs;
-		}
-		ptr++;
-	}
-
-	/* give up and parse /proc/mounts */
-	fp = fopen("/proc/mounts", "r");
-	if (fp == NULL)
-		perror("Can't open /proc/mounts for read");
-
-	while (fscanf(fp, "%*s %"
-		      STR(MAX_PATH)
-		      "s %99s %*s %*d %*d\n",
-		      hwpoison_debug_fs, type) == 2) {
-		if (strcmp(type, "debugfs") == 0)
-			break;
-	}
-	fclose(fp);
-
-	if (strcmp(type, "debugfs") != 0)
-		return NULL;
-
-	return hwpoison_debug_fs;
-}
-
-/* mount the debugfs somewhere if it's not mounted */
-
-static void debugfs_mount(void)
-{
-	const char **ptr;
-
-	/* see if it's already mounted */
-	if (debugfs_find_mountpoint())
-		return;
-
-	ptr = debugfs_known_mountpoints;
-	while (*ptr) {
-		if (mount(NULL, *ptr, "debugfs", 0, NULL) == 0) {
-			/* save the mountpoint */
-			strcpy(hwpoison_debug_fs, *ptr);
-			break;
-		}
-		ptr++;
-	}
-
-	if (*ptr == NULL) {
-		perror("mount debugfs");
-		exit(EXIT_FAILURE);
-	}
-}
-
 /*
  * page actions
  */
@@ -541,7 +472,11 @@ static void prepare_hwpoison_fd(void)
 {
 	char buf[MAX_PATH + 1];
 
-	debugfs_mount();
+	hwpoison_debug_fs = debugfs_mount(NULL);
+	if (!hwpoison_debug_fs) {
+		perror("mount debugfs");
+		exit(EXIT_FAILURE);
+	}
 
 	if (opt_hwpoison && !hwpoison_inject_fd) {
 		snprintf(buf, MAX_PATH, "%s/hwpoison/corrupt-pfn",
@@ -588,10 +523,10 @@ static int unpoison_page(unsigned long offset)
  * page frame walker
  */
 
-static int hash_slot(uint64_t flags)
+static size_t hash_slot(uint64_t flags)
 {
-	int k = HASH_KEY(flags);
-	int i;
+	size_t k = HASH_KEY(flags);
+	size_t i;
 
 	/* Explicitly reserve slot 0 for flags 0: the following logic
 	 * cannot distinguish an unoccupied slot from slot (flags==0).
@@ -644,7 +579,7 @@ static void walk_pfn(unsigned long voffset,
 {
 	uint64_t buf[KPAGEFLAGS_BATCH];
 	unsigned long batch;
-	long pages;
+	unsigned long pages;
 	unsigned long i;
 
 	while (count) {
@@ -753,7 +688,7 @@ static const char *page_flag_type(uint64_t flag)
 
 static void usage(void)
 {
-	int i, j;
+	size_t i, j;
 
 	printf(
 "page-types [options]\n"
@@ -912,7 +847,7 @@ static void add_bits_filter(uint64_t mask, uint64_t bits)
 
 static uint64_t parse_flag_name(const char *str, int len)
 {
-	int i;
+	size_t i;
 
 	if (!*str || !len)
 		return 0;

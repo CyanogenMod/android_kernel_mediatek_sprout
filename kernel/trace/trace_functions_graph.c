@@ -49,6 +49,8 @@ struct fgraph_data {
 #define TRACE_GRAPH_PRINT_FLAT		0x80
 
 
+static unsigned int max_depth;
+
 static struct tracer_opt trace_opts[] = {
 	/* Display overruns? (for self-debug purpose) */
 	{ TRACER_OPT(funcgraph-overrun, TRACE_GRAPH_PRINT_OVERRUN) },
@@ -147,7 +149,7 @@ ftrace_pop_return_trace(struct ftrace_graph_ret *trace, unsigned long *ret,
 		return;
 	}
 
-#ifdef CONFIG_HAVE_FUNCTION_GRAPH_FP_TEST
+#if defined(CONFIG_HAVE_FUNCTION_GRAPH_FP_TEST) && !defined(CC_USING_FENTRY)
 	/*
 	 * The arch may choose to record the frame pointer used
 	 * and check it here to make sure that it is what we expect it
@@ -158,6 +160,9 @@ ftrace_pop_return_trace(struct ftrace_graph_ret *trace, unsigned long *ret,
 	 *
 	 * Currently, x86_32 with optimize for size (-Os) makes the latest
 	 * gcc do the above.
+	 *
+	 * Note, -mfentry does not use frame pointers, and this test
+	 *  is not needed if CC_USING_FENTRY is set.
 	 */
 	if (unlikely(current->ret_stack[index].fp != frame_pointer)) {
 		ftrace_graph_stop();
@@ -190,9 +195,15 @@ unsigned long ftrace_return_to_handler(unsigned long frame_pointer)
 
 	ftrace_pop_return_trace(&trace, &ret, frame_pointer);
 	trace.rettime = trace_clock_local();
-	ftrace_graph_return(&trace);
 	barrier();
 	current->curr_ret_stack--;
+
+	/*
+	 * The trace should run after decrementing the ret counter
+	 * in case an interrupt were to come in. We don't want to
+	 * lose the interrupt if max_depth is set.
+	 */
+	ftrace_graph_return(&trace);
 
 	if (unlikely(!ret)) {
 		ftrace_graph_stop();
@@ -211,7 +222,7 @@ int __trace_graph_entry(struct trace_array *tr,
 {
 	struct ftrace_event_call *call = &event_funcgraph_entry;
 	struct ring_buffer_event *event;
-	struct ring_buffer *buffer = tr->buffer;
+	struct ring_buffer *buffer = tr->trace_buffer.buffer;
 	struct ftrace_graph_ent_entry *entry;
 
 	if (unlikely(__this_cpu_read(ftrace_cpu_disabled)))
@@ -224,7 +235,7 @@ int __trace_graph_entry(struct trace_array *tr,
 	entry	= ring_buffer_event_data(event);
 	entry->graph_ent			= *trace;
 	if (!filter_current_check_discard(buffer, call, entry, event))
-		ring_buffer_unlock_commit(buffer, event);
+		__buffer_unlock_commit(buffer, event);
 
 	return 1;
 }
@@ -251,13 +262,14 @@ int trace_graph_entry(struct ftrace_graph_ent *trace)
 		return 0;
 
 	/* trace it when it is-nested-in or is a function enabled. */
-	if (!(trace->depth || ftrace_graph_addr(trace->func)) ||
-	      ftrace_graph_ignore_irqs())
+	if ((!(trace->depth || ftrace_graph_addr(trace->func)) ||
+	     ftrace_graph_ignore_irqs()) ||
+	    (max_depth && trace->depth >= max_depth))
 		return 0;
 
 	local_irq_save(flags);
 	cpu = raw_smp_processor_id();
-	data = tr->data[cpu];
+	data = per_cpu_ptr(tr->trace_buffer.data, cpu);
 	disabled = atomic_inc_return(&data->disabled);
 	if (likely(disabled == 1)) {
 		pc = preempt_count();
@@ -315,7 +327,7 @@ void __trace_graph_return(struct trace_array *tr,
 {
 	struct ftrace_event_call *call = &event_funcgraph_exit;
 	struct ring_buffer_event *event;
-	struct ring_buffer *buffer = tr->buffer;
+	struct ring_buffer *buffer = tr->trace_buffer.buffer;
 	struct ftrace_graph_ret_entry *entry;
 
 	if (unlikely(__this_cpu_read(ftrace_cpu_disabled)))
@@ -328,7 +340,7 @@ void __trace_graph_return(struct trace_array *tr,
 	entry	= ring_buffer_event_data(event);
 	entry->ret				= *trace;
 	if (!filter_current_check_discard(buffer, call, entry, event))
-		ring_buffer_unlock_commit(buffer, event);
+		__buffer_unlock_commit(buffer, event);
 }
 
 void trace_graph_return(struct ftrace_graph_ret *trace)
@@ -342,7 +354,7 @@ void trace_graph_return(struct ftrace_graph_ret *trace)
 
 	local_irq_save(flags);
 	cpu = raw_smp_processor_id();
-	data = tr->data[cpu];
+	data = per_cpu_ptr(tr->trace_buffer.data, cpu);
 	disabled = atomic_inc_return(&data->disabled);
 	if (likely(disabled == 1)) {
 		pc = preempt_count();
@@ -542,7 +554,7 @@ get_return_for_leaf(struct trace_iterator *iter,
 		next = &data->ret;
 	} else {
 
-		ring_iter = iter->buffer_iter[iter->cpu];
+		ring_iter = trace_buffer_iter(iter, iter->cpu);
 
 		/* First peek to compare current entry and the next one */
 		if (ring_iter)
@@ -552,9 +564,9 @@ get_return_for_leaf(struct trace_iterator *iter,
 			 * We need to consume the current entry to see
 			 * the next one.
 			 */
-			ring_buffer_consume(iter->tr->buffer, iter->cpu,
+			ring_buffer_consume(iter->trace_buffer->buffer, iter->cpu,
 					    NULL, NULL);
-			event = ring_buffer_peek(iter->tr->buffer, iter->cpu,
+			event = ring_buffer_peek(iter->trace_buffer->buffer, iter->cpu,
 						 NULL, NULL);
 		}
 
@@ -1445,6 +1457,59 @@ static struct tracer graph_trace __read_mostly = {
 #endif
 };
 
+
+static ssize_t
+graph_depth_write(struct file *filp, const char __user *ubuf, size_t cnt,
+		  loff_t *ppos)
+{
+	unsigned long val;
+	int ret;
+
+	ret = kstrtoul_from_user(ubuf, cnt, 10, &val);
+	if (ret)
+		return ret;
+
+	max_depth = val;
+
+	*ppos += cnt;
+
+	return cnt;
+}
+
+static ssize_t
+graph_depth_read(struct file *filp, char __user *ubuf, size_t cnt,
+		 loff_t *ppos)
+{
+	char buf[15]; /* More than enough to hold UINT_MAX + "\n"*/
+	int n;
+
+	n = sprintf(buf, "%d\n", max_depth);
+
+	return simple_read_from_buffer(ubuf, cnt, ppos, buf, n);
+}
+
+static const struct file_operations graph_depth_fops = {
+	.open		= tracing_open_generic,
+	.write		= graph_depth_write,
+	.read		= graph_depth_read,
+	.llseek		= generic_file_llseek,
+};
+
+static __init int init_graph_debugfs(void)
+{
+	struct dentry *d_tracer;
+
+	d_tracer = tracing_init_dentry();
+	if (!d_tracer)
+		return 0;
+
+	trace_create_file("max_graph_depth", 0644, d_tracer,
+			  NULL, &graph_depth_fops);
+
+	return 0;
+}
+fs_initcall(init_graph_debugfs);
+
 static __init int init_graph_trace(void)
 {
 	max_bytes_for_cpu = snprintf(NULL, 0, "%d", nr_cpu_ids - 1);
@@ -1452,4 +1517,4 @@ static __init int init_graph_trace(void)
 	return register_tracer(&graph_trace);
 }
 
-device_initcall(init_graph_trace);
+core_initcall(init_graph_trace);

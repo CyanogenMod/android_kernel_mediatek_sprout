@@ -1,7 +1,8 @@
 #ifndef _ASM_X86_SETUP_H
 #define _ASM_X86_SETUP_H
 
-#ifdef __KERNEL__
+#include <uapi/asm/setup.h>
+
 
 #define COMMAND_LINE_SIZE 2048
 
@@ -60,6 +61,8 @@ static inline void x86_ce4100_early_setup(void) { }
 #endif
 
 #ifndef _SETUP
+
+#include <asm/espfix.h>
 
 /*
  * This is set up by the setup-routine at boot-time
@@ -123,6 +126,4 @@ void __init x86_64_start_reservations(char *real_mode_data);
 	.size .brk.name,.-1b;				\
 	.popsection
 #endif /* __ASSEMBLY__ */
-#endif  /*  __KERNEL__  */
-
 #endif /* _ASM_X86_SETUP_H */

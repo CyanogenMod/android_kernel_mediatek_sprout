@@ -44,6 +44,8 @@
 #include <linux/moduleparam.h>
 #include <linux/cpuidle.h>
 #include <linux/slab.h>
+#include <linux/acpi.h>
+#include <linux/memory_hotplug.h>
 
 #include <asm/io.h>
 #include <asm/cpu.h>
@@ -80,7 +82,7 @@ MODULE_DESCRIPTION("ACPI Processor Driver");
 MODULE_LICENSE("GPL");
 
 static int acpi_processor_add(struct acpi_device *device);
-static int acpi_processor_remove(struct acpi_device *device, int type);
+static int acpi_processor_remove(struct acpi_device *device);
 static void acpi_processor_notify(struct acpi_device *device, u32 event);
 static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr);
 static int acpi_processor_handle_eject(struct acpi_processor *pr);
@@ -100,8 +102,6 @@ static struct acpi_driver acpi_processor_driver = {
 	.ops = {
 		.add = acpi_processor_add,
 		.remove = acpi_processor_remove,
-		.suspend = acpi_processor_suspend,
-		.resume = acpi_processor_resume,
 		.notify = acpi_processor_notify,
 		},
 };
@@ -280,7 +280,9 @@ static int acpi_processor_get_info(struct acpi_device *device)
 		/* Declared with "Processor" statement; match ProcessorID */
 		status = acpi_evaluate_object(pr->handle, NULL, NULL, &buffer);
 		if (ACPI_FAILURE(status)) {
-			printk(KERN_ERR PREFIX "Evaluating processor object\n");
+			dev_err(&device->dev,
+				"Failed to evaluate processor object (0x%x)\n",
+				status);
 			return -ENODEV;
 		}
 
@@ -299,8 +301,9 @@ static int acpi_processor_get_info(struct acpi_device *device)
 		status = acpi_evaluate_integer(pr->handle, METHOD_NAME__UID,
 						NULL, &value);
 		if (ACPI_FAILURE(status)) {
-			printk(KERN_ERR PREFIX
-			    "Evaluating processor _UID [%#x]\n", status);
+			dev_err(&device->dev,
+				"Failed to evaluate processor _UID (0x%x)\n",
+				status);
 			return -ENODEV;
 		}
 		device_declaration = 1;
@@ -343,7 +346,7 @@ static int acpi_processor_get_info(struct acpi_device *device)
 	if (!object.processor.pblk_address)
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "No PBLK (NULL address)\n"));
 	else if (object.processor.pblk_length != 6)
-		printk(KERN_ERR PREFIX "Invalid PBLK length [%d]\n",
+		dev_err(&device->dev, "Invalid PBLK length [%d]\n",
 			    object.processor.pblk_length);
 	else {
 		pr->throttling.address = object.processor.pblk_address;
@@ -428,18 +431,11 @@ static int acpi_cpu_soft_notify(struct notifier_block *nfb,
 		 * Initialize missing things
 		 */
 		if (pr->flags.need_hotplug_init) {
-			struct cpuidle_driver *idle_driver =
-				cpuidle_get_driver();
-
-			printk(KERN_INFO "Will online and init hotplugged "
-			       "CPU: %d\n", pr->id);
+			pr_info("Will online and init hotplugged CPU: %d\n",
+				pr->id);
 			WARN(acpi_processor_start(pr), "Failed to start CPU:"
 				" %d\n", pr->id);
 			pr->flags.need_hotplug_init = 0;
-			if (idle_driver && !strcmp(idle_driver->name,
-						   "intel_idle")) {
-				intel_idle_cpu_init(pr->id);
-			}
 		/* Normal CPU soft online event */
 		} else {
 			acpi_processor_ppc_has_changed(pr, 0);
@@ -481,7 +477,7 @@ static __ref int acpi_processor_start(struct acpi_processor *pr)
 	acpi_processor_get_limit_info(pr);
 
 	if (!cpuidle_get_driver() || cpuidle_get_driver() == &acpi_idle_driver)
-		acpi_processor_power_init(pr, device);
+		acpi_processor_power_init(pr);
 
 	pr->cdev = thermal_cooling_device_register("Processor", device,
 						   &processor_cooling_ops);
@@ -497,14 +493,16 @@ static __ref int acpi_processor_start(struct acpi_processor *pr)
 				   &pr->cdev->device.kobj,
 				   "thermal_cooling");
 	if (result) {
-		printk(KERN_ERR PREFIX "Create sysfs link\n");
+		dev_err(&device->dev,
+			"Failed to create sysfs link 'thermal_cooling'\n");
 		goto err_thermal_unregister;
 	}
 	result = sysfs_create_link(&pr->cdev->device.kobj,
 				   &device->dev.kobj,
 				   "device");
 	if (result) {
-		printk(KERN_ERR PREFIX "Create sysfs link\n");
+		dev_err(&pr->cdev->device,
+			"Failed to create sysfs link 'device'\n");
 		goto err_remove_sysfs_thermal;
 	}
 
@@ -515,7 +513,7 @@ err_remove_sysfs_thermal:
 err_thermal_unregister:
 	thermal_cooling_device_unregister(pr->cdev);
 err_power_exit:
-	acpi_processor_power_exit(pr, device);
+	acpi_processor_power_exit(pr);
 
 	return result;
 }
@@ -557,7 +555,7 @@ static int __cpuinit acpi_processor_add(struct acpi_device *device)
 		return 0;
 #endif
 
-	BUG_ON((pr->id >= nr_cpu_ids) || (pr->id < 0));
+	BUG_ON(pr->id >= nr_cpu_ids);
 
 	/*
 	 * Buggy BIOS check
@@ -566,8 +564,9 @@ static int __cpuinit acpi_processor_add(struct acpi_device *device)
 	 */
 	if (per_cpu(processor_device_array, pr->id) != NULL &&
 	    per_cpu(processor_device_array, pr->id) != device) {
-		printk(KERN_WARNING "BIOS reported wrong ACPI id "
-			"for the processor\n");
+		dev_warn(&device->dev,
+			"BIOS reported wrong ACPI id %d for the processor\n",
+			pr->id);
 		result = -ENODEV;
 		goto err_free_cpumask;
 	}
@@ -608,7 +607,7 @@ err_free_pr:
 	return result;
 }
 
-static int acpi_processor_remove(struct acpi_device *device, int type)
+static int acpi_processor_remove(struct acpi_device *device)
 {
 	struct acpi_processor *pr = NULL;
 
@@ -621,12 +620,12 @@ static int acpi_processor_remove(struct acpi_device *device, int type)
 	if (pr->id >= nr_cpu_ids)
 		goto free;
 
-	if (type == ACPI_BUS_REMOVAL_EJECT) {
+	if (device->removal_type == ACPI_BUS_REMOVAL_EJECT) {
 		if (acpi_processor_handle_eject(pr))
 			return -EINVAL;
 	}
 
-	acpi_processor_power_exit(pr, device);
+	acpi_processor_power_exit(pr);
 
 	sysfs_remove_link(&device->dev.kobj, "sysdev");
 
@@ -639,6 +638,7 @@ static int acpi_processor_remove(struct acpi_device *device, int type)
 
 	per_cpu(processors, pr->id) = NULL;
 	per_cpu(processor_device_array, pr->id) = NULL;
+	try_offline_node(cpu_to_node(pr->id));
 
 free:
 	free_cpumask_var(pr->throttling.shared_cpu_map);
@@ -675,35 +675,16 @@ static int is_processor_present(acpi_handle handle)
 	return 0;
 }
 
-static
-int acpi_processor_device_add(acpi_handle handle, struct acpi_device **device)
-{
-	acpi_handle phandle;
-	struct acpi_device *pdev;
-
-
-	if (acpi_get_parent(handle, &phandle)) {
-		return -ENODEV;
-	}
-
-	if (acpi_bus_get_device(phandle, &pdev)) {
-		return -ENODEV;
-	}
-
-	if (acpi_bus_add(device, pdev, handle, ACPI_BUS_TYPE_PROCESSOR)) {
-		return -ENODEV;
-	}
-
-	return 0;
-}
-
 static void acpi_processor_hotplug_notify(acpi_handle handle,
 					  u32 event, void *data)
 {
-	struct acpi_processor *pr;
 	struct acpi_device *device = NULL;
+	struct acpi_eject_event *ej_event = NULL;
+	u32 ost_code = ACPI_OST_SC_NON_SPECIFIC_FAILURE; /* default */
+	acpi_status status;
 	int result;
 
+	acpi_scan_lock_acquire();
 
 	switch (event) {
 	case ACPI_NOTIFY_BUS_CHECK:
@@ -716,37 +697,69 @@ static void acpi_processor_hotplug_notify(acpi_handle handle,
 		if (!is_processor_present(handle))
 			break;
 
-		if (acpi_bus_get_device(handle, &device)) {
-			result = acpi_processor_device_add(handle, &device);
-			if (result)
-				printk(KERN_ERR PREFIX
-					    "Unable to add the device\n");
+		if (!acpi_bus_get_device(handle, &device))
+			break;
+
+		result = acpi_bus_scan(handle);
+		if (result) {
+			acpi_handle_err(handle, "Unable to add the device\n");
 			break;
 		}
+		result = acpi_bus_get_device(handle, &device);
+		if (result) {
+			acpi_handle_err(handle, "Missing device object\n");
+			break;
+		}
+		ost_code = ACPI_OST_SC_SUCCESS;
 		break;
+
 	case ACPI_NOTIFY_EJECT_REQUEST:
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 				  "received ACPI_NOTIFY_EJECT_REQUEST\n"));
 
 		if (acpi_bus_get_device(handle, &device)) {
-			printk(KERN_ERR PREFIX
-				    "Device don't exist, dropping EJECT\n");
+			acpi_handle_err(handle,
+				"Device don't exist, dropping EJECT\n");
 			break;
 		}
-		pr = acpi_driver_data(device);
-		if (!pr) {
-			printk(KERN_ERR PREFIX
-				    "Driver data is NULL, dropping EJECT\n");
-			return;
+		if (!acpi_driver_data(device)) {
+			acpi_handle_err(handle,
+				"Driver data is NULL, dropping EJECT\n");
+			break;
 		}
-		break;
+
+		ej_event = kmalloc(sizeof(*ej_event), GFP_KERNEL);
+		if (!ej_event) {
+			acpi_handle_err(handle, "No memory, dropping EJECT\n");
+			break;
+		}
+
+		get_device(&device->dev);
+		ej_event->device = device;
+		ej_event->event = ACPI_NOTIFY_EJECT_REQUEST;
+		/* The eject is carried out asynchronously. */
+		status = acpi_os_hotplug_execute(acpi_bus_hot_remove_device,
+						 ej_event);
+		if (ACPI_FAILURE(status)) {
+			put_device(&device->dev);
+			kfree(ej_event);
+			break;
+		}
+		goto out;
+
 	default:
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
 				  "Unsupported event [0x%x]\n", event));
-		break;
+
+		/* non-hotplug event; possibly handled by other handler */
+		goto out;
 	}
 
-	return;
+	/* Inform firmware that the hotplug operation has completed */
+	(void) acpi_evaluate_hotplug_ost(handle, event, ost_code, NULL);
+
+ out:
+	acpi_scan_lock_release();
 }
 
 static acpi_status is_processor_device(acpi_handle handle)
@@ -834,7 +847,7 @@ static acpi_status acpi_processor_hotadd_init(struct acpi_processor *pr)
 	 * and do it when the CPU gets online the first time
 	 * TBD: Cleanup above functions and try to do this more elegant.
 	 */
-	printk(KERN_INFO "CPU %d got hotplugged\n", pr->id);
+	pr_info("CPU %d got hotplugged\n", pr->id);
 	pr->flags.need_hotplug_init = 1;
 
 	return AE_OK;
@@ -845,8 +858,22 @@ static int acpi_processor_handle_eject(struct acpi_processor *pr)
 	if (cpu_online(pr->id))
 		cpu_down(pr->id);
 
+	get_online_cpus();
+	/*
+	 * The cpu might become online again at this point. So we check whether
+	 * the cpu has been onlined or not. If the cpu became online, it means
+	 * that someone wants to use the cpu. So acpi_processor_handle_eject()
+	 * returns -EAGAIN.
+	 */
+	if (unlikely(cpu_online(pr->id))) {
+		put_online_cpus();
+		pr_warn("Failed to remove CPU %d, because other task "
+			"brought the CPU back online\n", pr->id);
+		return -EAGAIN;
+	}
 	arch_unregister_cpu(pr->id);
 	acpi_unmap_lsapic(pr->id);
+	put_online_cpus();
 	return (0);
 }
 #else
@@ -899,11 +926,11 @@ static int __init acpi_processor_init(void)
 	if (acpi_disabled)
 		return 0;
 
-	memset(&errata, 0, sizeof(errata));
-
 	result = acpi_bus_register_driver(&acpi_processor_driver);
 	if (result < 0)
 		return result;
+
+	acpi_processor_syscore_init();
 
 	acpi_processor_install_hotplug_notify();
 
@@ -926,6 +953,8 @@ static void __exit acpi_processor_exit(void)
 	acpi_thermal_cpufreq_exit();
 
 	acpi_processor_uninstall_hotplug_notify();
+
+	acpi_processor_syscore_exit();
 
 	acpi_bus_unregister_driver(&acpi_processor_driver);
 

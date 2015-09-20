@@ -9,6 +9,9 @@
 #include <asm/uaccess.h>
 #include <linux/kernel_stat.h>
 #include <trace/events/timer.h>
+#include <linux/random.h>
+#include <linux/tick.h>
+#include <linux/workqueue.h>
 
 /*
  * Called after updating RLIMIT_CPU to run cpu timer and update
@@ -152,13 +155,36 @@ static void bump_cpu_timer(struct k_itimer *timer,
 	}
 }
 
+/**
+ * task_cputime_zero - Check a task_cputime struct for all zero fields.
+ *
+ * @cputime:	The struct to compare.
+ *
+ * Checks @cputime to see if all fields are zero.  Returns true if all fields
+ * are zero, false if any field is nonzero.
+ */
+static inline int task_cputime_zero(const struct task_cputime *cputime)
+{
+	if (!cputime->utime && !cputime->stime && !cputime->sum_exec_runtime)
+		return 1;
+	return 0;
+}
+
 static inline cputime_t prof_ticks(struct task_struct *p)
 {
-	return p->utime + p->stime;
+	cputime_t utime, stime;
+
+	task_cputime(p, &utime, &stime);
+
+	return utime + stime;
 }
 static inline cputime_t virt_ticks(struct task_struct *p)
 {
-	return p->utime;
+	cputime_t utime;
+
+	task_cputime(p, &utime, NULL);
+
+	return utime;
 }
 
 static int
@@ -215,30 +241,6 @@ static int cpu_clock_sample(const clockid_t which_clock, struct task_struct *p,
 		break;
 	}
 	return 0;
-}
-
-void thread_group_cputime(struct task_struct *tsk, struct task_cputime *times)
-{
-	struct signal_struct *sig = tsk->signal;
-	struct task_struct *t;
-
-	times->utime = sig->utime;
-	times->stime = sig->stime;
-	times->sum_exec_runtime = sig->sum_sched_runtime;
-
-	rcu_read_lock();
-	/* make sure we can trust tsk->thread_group list */
-	if (!likely(pid_alive(tsk)))
-		goto out;
-
-	t = tsk;
-	do {
-		times->utime += t->utime;
-		times->stime += t->stime;
-		times->sum_exec_runtime += task_sched_runtime(t);
-	} while_each_thread(tsk, t);
-out:
-	rcu_read_unlock();
 }
 
 static void update_gt_cputime(struct task_cputime *a, struct task_cputime *b)
@@ -494,16 +496,23 @@ static void cleanup_timers(struct list_head *head,
  */
 void posix_cpu_timers_exit(struct task_struct *tsk)
 {
+	cputime_t utime, stime;
+
+	add_device_randomness((const void*) &tsk->se.sum_exec_runtime,
+						sizeof(unsigned long long));
+	task_cputime(tsk, &utime, &stime);
 	cleanup_timers(tsk->cpu_timers,
-		       tsk->utime, tsk->stime, tsk->se.sum_exec_runtime);
+		       utime, stime, tsk->se.sum_exec_runtime);
 
 }
 void posix_cpu_timers_exit_group(struct task_struct *tsk)
 {
 	struct signal_struct *const sig = tsk->signal;
+	cputime_t utime, stime;
 
+	task_cputime(tsk, &utime, &stime);
 	cleanup_timers(tsk->signal->cpu_timers,
-		       tsk->utime + sig->utime, tsk->stime + sig->stime,
+		       utime + sig->utime, stime + sig->stime,
 		       tsk->se.sum_exec_runtime + sig->sum_sched_runtime);
 }
 
@@ -643,6 +652,37 @@ static int cpu_timer_sample_group(const clockid_t which_clock,
 	}
 	return 0;
 }
+
+#ifdef CONFIG_NO_HZ_FULL
+static void nohz_kick_work_fn(struct work_struct *work)
+{
+	tick_nohz_full_kick_all();
+}
+
+static DECLARE_WORK(nohz_kick_work, nohz_kick_work_fn);
+
+/*
+ * We need the IPIs to be sent from sane process context.
+ * The posix cpu timers are always set with irqs disabled.
+ */
+static void posix_cpu_timer_kick_nohz(void)
+{
+	schedule_work(&nohz_kick_work);
+}
+
+bool posix_cpu_timers_can_stop_tick(struct task_struct *tsk)
+{
+	if (!task_cputime_zero(&tsk->cputime_expires))
+		return false;
+
+	if (tsk->signal->cputimer.running)
+		return false;
+
+	return true;
+}
+#else
+static inline void posix_cpu_timer_kick_nohz(void) { }
+#endif
 
 /*
  * Guts of sys_timer_settime for CPU timers.
@@ -802,6 +842,8 @@ static int posix_cpu_timer_set(struct k_itimer *timer, int flags,
 		sample_to_timespec(timer->it_clock,
 				   old_incr, &old->it_interval);
 	}
+	if (!ret)
+		posix_cpu_timer_kick_nohz();
 	return ret;
 }
 
@@ -1014,21 +1056,6 @@ static void check_cpu_itimer(struct task_struct *tsk, struct cpu_itimer *it,
 	if (it->expires && (!*expires || it->expires < *expires)) {
 		*expires = it->expires;
 	}
-}
-
-/**
- * task_cputime_zero - Check a task_cputime struct for all zero fields.
- *
- * @cputime:	The struct to compare.
- *
- * Checks @cputime to see if all fields are zero.  Returns true if all fields
- * are zero, false if any field is nonzero.
- */
-static inline int task_cputime_zero(const struct task_cputime *cputime)
-{
-	if (!cputime->utime && !cputime->stime && !cputime->sum_exec_runtime)
-		return 1;
-	return 0;
 }
 
 /*
@@ -1247,11 +1274,14 @@ static inline int task_cputime_expired(const struct task_cputime *sample,
 static inline int fastpath_timer_check(struct task_struct *tsk)
 {
 	struct signal_struct *sig;
+	cputime_t utime, stime;
+
+	task_cputime(tsk, &utime, &stime);
 
 	if (!task_cputime_zero(&tsk->cputime_expires)) {
 		struct task_cputime task_sample = {
-			.utime = tsk->utime,
-			.stime = tsk->stime,
+			.utime = utime,
+			.stime = stime,
 			.sum_exec_runtime = tsk->se.sum_exec_runtime
 		};
 
@@ -1341,6 +1371,13 @@ void run_posix_cpu_timers(struct task_struct *tsk)
 			cpu_timer_fire(timer);
 		spin_unlock(&timer->it_lock);
 	}
+
+	/*
+	 * In case some timers were rescheduled after the queue got emptied,
+	 * wake up full dynticks CPUs.
+	 */
+	if (tsk->signal->cputimer.running)
+		posix_cpu_timer_kick_nohz();
 }
 
 /*
@@ -1371,7 +1408,7 @@ void set_process_cpu_timer(struct task_struct *tsk, unsigned int clock_idx,
 		}
 
 		if (!*newval)
-			return;
+			goto out;
 		*newval += now.cpu;
 	}
 
@@ -1389,6 +1426,8 @@ void set_process_cpu_timer(struct task_struct *tsk, unsigned int clock_idx,
 			tsk->signal->cputime_expires.virt_exp = *newval;
 		break;
 	}
+out:
+	posix_cpu_timer_kick_nohz();
 }
 
 static int do_cpu_nanosleep(const clockid_t which_clock, int flags,

@@ -26,6 +26,7 @@
 #include <linux/i2c.h>
 #include <linux/i2c/pxa-i2c.h>
 #include <linux/io.h>
+#include <linux/regulator/machine.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/spi/corgi_lcd.h>
@@ -46,8 +47,8 @@
 #include <asm/mach/irq.h>
 
 #include <mach/pxa25x.h>
-#include <mach/irda.h>
-#include <mach/mmc.h>
+#include <linux/platform_data/irda-pxaficp.h>
+#include <linux/platform_data/mmc-pxamci.h>
 #include <mach/udc.h>
 #include <mach/corgi.h>
 #include <mach/sharpsl_pm.h>
@@ -711,6 +712,8 @@ static void __init corgi_init(void)
 		sharpsl_nand_partitions[1].size = 53 * 1024 * 1024;
 
 	platform_add_devices(devices, ARRAY_SIZE(devices));
+
+	regulator_has_full_constraints();
 }
 
 static void __init fixup_corgi(struct tag *tags, char **cmdline,
@@ -733,7 +736,7 @@ MACHINE_START(CORGI, "SHARP Corgi")
 	.init_irq	= pxa25x_init_irq,
 	.handle_irq	= pxa25x_handle_irq,
 	.init_machine	= corgi_init,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.restart	= corgi_restart,
 MACHINE_END
 #endif
@@ -746,7 +749,7 @@ MACHINE_START(SHEPHERD, "SHARP Shepherd")
 	.init_irq	= pxa25x_init_irq,
 	.handle_irq	= pxa25x_handle_irq,
 	.init_machine	= corgi_init,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.restart	= corgi_restart,
 MACHINE_END
 #endif
@@ -759,7 +762,7 @@ MACHINE_START(HUSKY, "SHARP Husky")
 	.init_irq	= pxa25x_init_irq,
 	.handle_irq	= pxa25x_handle_irq,
 	.init_machine	= corgi_init,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.restart	= corgi_restart,
 MACHINE_END
 #endif

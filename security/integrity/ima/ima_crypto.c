@@ -19,38 +19,71 @@
 #include <linux/scatterlist.h>
 #include <linux/err.h>
 #include <linux/slab.h>
+#include <crypto/hash.h>
 #include "ima.h"
 
-static int init_desc(struct hash_desc *desc)
-{
-	int rc;
+static struct crypto_shash *ima_shash_tfm;
 
-	desc->tfm = crypto_alloc_hash(ima_hash, 0, CRYPTO_ALG_ASYNC);
-	if (IS_ERR(desc->tfm)) {
-		pr_info("IMA: failed to load %s transform: %ld\n",
-			ima_hash, PTR_ERR(desc->tfm));
-		rc = PTR_ERR(desc->tfm);
+/**
+ * ima_kernel_read - read file content
+ *
+ * This is a function for reading file content instead of kernel_read().
+ * It does not perform locking checks to ensure it cannot be blocked.
+ * It does not perform security checks because it is irrelevant for IMA.
+ *
+ */
+static int ima_kernel_read(struct file *file, loff_t offset,
+			   char *addr, unsigned long count)
+{
+	mm_segment_t old_fs;
+	char __user *buf = addr;
+	ssize_t ret;
+
+	if (!(file->f_mode & FMODE_READ))
+		return -EBADF;
+	if (!file->f_op->read && !file->f_op->aio_read)
+		return -EINVAL;
+
+	old_fs = get_fs();
+	set_fs(get_ds());
+	if (file->f_op->read)
+		ret = file->f_op->read(file, buf, count, &offset);
+	else
+		ret = do_sync_read(file, buf, count, &offset);
+	set_fs(old_fs);
+	return ret;
+}
+
+int ima_init_crypto(void)
+{
+	long rc;
+
+	ima_shash_tfm = crypto_alloc_shash(ima_hash, 0, 0);
+	if (IS_ERR(ima_shash_tfm)) {
+		rc = PTR_ERR(ima_shash_tfm);
+		pr_err("Can not allocate %s (reason: %ld)\n", ima_hash, rc);
 		return rc;
 	}
-	desc->flags = 0;
-	rc = crypto_hash_init(desc);
-	if (rc)
-		crypto_free_hash(desc->tfm);
-	return rc;
+	return 0;
 }
 
 /*
  * Calculate the MD5/SHA1 file digest
  */
-int ima_calc_hash(struct file *file, char *digest)
+int ima_calc_file_hash(struct file *file, char *digest)
 {
-	struct hash_desc desc;
-	struct scatterlist sg[1];
 	loff_t i_size, offset = 0;
 	char *rbuf;
-	int rc;
+	int rc, read = 0;
+	struct {
+		struct shash_desc shash;
+		char ctx[crypto_shash_descsize(ima_shash_tfm)];
+	} desc;
 
-	rc = init_desc(&desc);
+	desc.shash.tfm = ima_shash_tfm;
+	desc.shash.flags = 0;
+
+	rc = crypto_shash_init(&desc.shash);
 	if (rc != 0)
 		return rc;
 
@@ -59,11 +92,15 @@ int ima_calc_hash(struct file *file, char *digest)
 		rc = -ENOMEM;
 		goto out;
 	}
-	i_size = i_size_read(file->f_dentry->d_inode);
+	if (!(file->f_mode & FMODE_READ)) {
+		file->f_mode |= FMODE_READ;
+		read = 1;
+	}
+	i_size = i_size_read(file_inode(file));
 	while (offset < i_size) {
 		int rbuf_len;
 
-		rbuf_len = kernel_read(file, offset, rbuf, PAGE_SIZE);
+		rbuf_len = ima_kernel_read(file, offset, rbuf, PAGE_SIZE);
 		if (rbuf_len < 0) {
 			rc = rbuf_len;
 			break;
@@ -71,39 +108,34 @@ int ima_calc_hash(struct file *file, char *digest)
 		if (rbuf_len == 0)
 			break;
 		offset += rbuf_len;
-		sg_init_one(sg, rbuf, rbuf_len);
 
-		rc = crypto_hash_update(&desc, sg, rbuf_len);
+		rc = crypto_shash_update(&desc.shash, rbuf, rbuf_len);
 		if (rc)
 			break;
 	}
 	kfree(rbuf);
 	if (!rc)
-		rc = crypto_hash_final(&desc, digest);
+		rc = crypto_shash_final(&desc.shash, digest);
+	if (read)
+		file->f_mode &= ~FMODE_READ;
 out:
-	crypto_free_hash(desc.tfm);
 	return rc;
 }
 
 /*
- * Calculate the hash of a given template
+ * Calculate the hash of a given buffer
  */
-int ima_calc_template_hash(int template_len, void *template, char *digest)
+int ima_calc_buffer_hash(const void *data, int len, char *digest)
 {
-	struct hash_desc desc;
-	struct scatterlist sg[1];
-	int rc;
+	struct {
+		struct shash_desc shash;
+		char ctx[crypto_shash_descsize(ima_shash_tfm)];
+	} desc;
 
-	rc = init_desc(&desc);
-	if (rc != 0)
-		return rc;
+	desc.shash.tfm = ima_shash_tfm;
+	desc.shash.flags = 0;
 
-	sg_init_one(sg, template, template_len);
-	rc = crypto_hash_update(&desc, sg, template_len);
-	if (!rc)
-		rc = crypto_hash_final(&desc, digest);
-	crypto_free_hash(desc.tfm);
-	return rc;
+	return crypto_shash_digest(&desc.shash, data, len, digest);
 }
 
 static void __init ima_pcrread(int idx, u8 *pcr)
@@ -120,12 +152,17 @@ static void __init ima_pcrread(int idx, u8 *pcr)
  */
 int __init ima_calc_boot_aggregate(char *digest)
 {
-	struct hash_desc desc;
-	struct scatterlist sg;
 	u8 pcr_i[IMA_DIGEST_SIZE];
 	int rc, i;
+	struct {
+		struct shash_desc shash;
+		char ctx[crypto_shash_descsize(ima_shash_tfm)];
+	} desc;
 
-	rc = init_desc(&desc);
+	desc.shash.tfm = ima_shash_tfm;
+	desc.shash.flags = 0;
+
+	rc = crypto_shash_init(&desc.shash);
 	if (rc != 0)
 		return rc;
 
@@ -133,11 +170,9 @@ int __init ima_calc_boot_aggregate(char *digest)
 	for (i = TPM_PCR0; i < TPM_PCR8; i++) {
 		ima_pcrread(i, pcr_i);
 		/* now accumulate with current aggregate */
-		sg_init_one(&sg, pcr_i, IMA_DIGEST_SIZE);
-		rc = crypto_hash_update(&desc, &sg, IMA_DIGEST_SIZE);
+		rc = crypto_shash_update(&desc.shash, pcr_i, IMA_DIGEST_SIZE);
 	}
 	if (!rc)
-		crypto_hash_final(&desc, digest);
-	crypto_free_hash(desc.tfm);
+		crypto_shash_final(&desc.shash, digest);
 	return rc;
 }

@@ -443,7 +443,7 @@ static inline int io_type_enabled(struct pci_dev *pdev, unsigned int mask)
 #define pio_enabled(dev) io_type_enabled(dev, PCI_COMMAND_IO)
 #define mmio_enabled(dev) io_type_enabled(dev, PCI_COMMAND_MEMORY)
 
-static void __devinit quirk_usb_handoff_uhci(struct pci_dev *pdev)
+static void quirk_usb_handoff_uhci(struct pci_dev *pdev)
 {
 	unsigned long base = 0;
 	int i;
@@ -461,16 +461,17 @@ static void __devinit quirk_usb_handoff_uhci(struct pci_dev *pdev)
 		uhci_check_and_reset_hc(pdev, base);
 }
 
-static int __devinit mmio_resource_enabled(struct pci_dev *pdev, int idx)
+static int mmio_resource_enabled(struct pci_dev *pdev, int idx)
 {
 	return pci_resource_start(pdev, idx) && mmio_enabled(pdev);
 }
 
-static void __devinit quirk_usb_handoff_ohci(struct pci_dev *pdev)
+static void quirk_usb_handoff_ohci(struct pci_dev *pdev)
 {
 	void __iomem *base;
 	u32 control;
-	u32 fminterval;
+	u32 fminterval = 0;
+	bool no_fminterval = false;
 	int cnt;
 
 	if (!mmio_resource_enabled(pdev, 0))
@@ -479,6 +480,13 @@ static void __devinit quirk_usb_handoff_ohci(struct pci_dev *pdev)
 	base = pci_ioremap_bar(pdev, 0);
 	if (base == NULL)
 		return;
+
+	/*
+	 * ULi M5237 OHCI controller locks the whole system when accessing
+	 * the OHCI_FMINTERVAL offset.
+	 */
+	if (pdev->vendor == PCI_VENDOR_ID_AL && pdev->device == 0x5237)
+		no_fminterval = true;
 
 	control = readl(base + OHCI_CONTROL);
 
@@ -518,7 +526,9 @@ static void __devinit quirk_usb_handoff_ohci(struct pci_dev *pdev)
 	}
 
 	/* software reset of the controller, preserving HcFmInterval */
-	fminterval = readl(base + OHCI_FMINTERVAL);
+	if (!no_fminterval)
+		fminterval = readl(base + OHCI_FMINTERVAL);
+
 	writel(OHCI_HCR, base + OHCI_CMDSTATUS);
 
 	/* reset requires max 10 us delay */
@@ -527,13 +537,15 @@ static void __devinit quirk_usb_handoff_ohci(struct pci_dev *pdev)
 			break;
 		udelay(1);
 	}
-	writel(fminterval, base + OHCI_FMINTERVAL);
+
+	if (!no_fminterval)
+		writel(fminterval, base + OHCI_FMINTERVAL);
 
 	/* Now the controller is safely in SUSPEND and nothing can wake it up */
 	iounmap(base);
 }
 
-static const struct dmi_system_id __devinitconst ehci_dmi_nohandoff_table[] = {
+static const struct dmi_system_id ehci_dmi_nohandoff_table[] = {
 	{
 		/*  Pegatron Lucid (ExoPC) */
 		.matches = {
@@ -553,20 +565,36 @@ static const struct dmi_system_id __devinitconst ehci_dmi_nohandoff_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_BOARD_NAME, "Ordissimo"),
 			DMI_MATCH(DMI_BIOS_VERSION, "Lucid-"),
+<<<<<<< HEAD
+=======
+		},
+	},
+	{
+		/* HASEE E200 */
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "HASEE"),
+			DMI_MATCH(DMI_BOARD_NAME, "E210"),
+			DMI_MATCH(DMI_BIOS_VERSION, "6.00"),
+>>>>>>> v3.10.88
 		},
 	},
 	{ }
 };
 
-static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
+static void ehci_bios_handoff(struct pci_dev *pdev,
 					void __iomem *op_reg_base,
 					u32 cap, u8 offset)
 {
 	int try_handoff = 1, tried_handoff = 0;
 
-	/* The Pegatron Lucid tablet sporadically waits for 98 seconds trying
-	 * the handoff on its unused controller.  Skip it. */
-	if (pdev->vendor == 0x8086 && pdev->device == 0x283a) {
+	/*
+	 * The Pegatron Lucid tablet sporadically waits for 98 seconds trying
+	 * the handoff on its unused controller.  Skip it.
+	 *
+	 * The HASEE E200 hangs when the semaphore is set (bugzilla #77021).
+	 */
+	if (pdev->vendor == 0x8086 && (pdev->device == 0x283a ||
+			pdev->device == 0x27cc)) {
 		if (dmi_check_system(ehci_dmi_nohandoff_table))
 			try_handoff = 0;
 	}
@@ -626,7 +654,7 @@ static void __devinit ehci_bios_handoff(struct pci_dev *pdev,
 		writel(0, op_reg_base + EHCI_CONFIGFLAG);
 }
 
-static void __devinit quirk_usb_disable_ehci(struct pci_dev *pdev)
+static void quirk_usb_disable_ehci(struct pci_dev *pdev)
 {
 	void __iomem *base, *op_reg_base;
 	u32	hcc_params, cap, val;
@@ -844,7 +872,7 @@ EXPORT_SYMBOL_GPL(usb_disable_xhci_ports);
  * and then waits 5 seconds for the BIOS to hand over control.
  * If we timeout, assume the BIOS is broken and take control anyway.
  */
-static void __devinit quirk_usb_handoff_xhci(struct pci_dev *pdev)
+static void quirk_usb_handoff_xhci(struct pci_dev *pdev)
 {
 	void __iomem *base;
 	int ext_cap_offset;
@@ -944,7 +972,7 @@ hc_init:
 	iounmap(base);
 }
 
-static void __devinit quirk_usb_early_handoff(struct pci_dev *pdev)
+static void quirk_usb_early_handoff(struct pci_dev *pdev)
 {
 	/* Skip Netlogic mips SoC's internal PCI USB controller.
 	 * This device does not need/support EHCI/OHCI handoff

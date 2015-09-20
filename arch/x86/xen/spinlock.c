@@ -364,6 +364,16 @@ void __cpuinit xen_init_lock_cpu(int cpu)
 	int irq;
 	const char *name;
 
+	WARN(per_cpu(lock_kicker_irq, cpu) >= 0, "spinlock on CPU%d exists on IRQ%d!\n",
+	     cpu, per_cpu(lock_kicker_irq, cpu));
+
+	/*
+	 * See git commit f10cd522c5fbfec9ae3cc01967868c9c2401ed23
+	 * (xen: disable PV spinlocks on HVM)
+	 */
+	if (xen_hvm_domain())
+		return;
+
 	name = kasprintf(GFP_KERNEL, "spinlock%d", cpu);
 	irq = bind_ipi_to_irqhandler(XEN_SPIN_UNLOCK_VECTOR,
 				     cpu,
@@ -382,11 +392,26 @@ void __cpuinit xen_init_lock_cpu(int cpu)
 
 void xen_uninit_lock_cpu(int cpu)
 {
+	/*
+	 * See git commit f10cd522c5fbfec9ae3cc01967868c9c2401ed23
+	 * (xen: disable PV spinlocks on HVM)
+	 */
+	if (xen_hvm_domain())
+		return;
+
 	unbind_from_irqhandler(per_cpu(lock_kicker_irq, cpu), NULL);
+	per_cpu(lock_kicker_irq, cpu) = -1;
 }
 
 void __init xen_init_spinlocks(void)
 {
+	/*
+	 * See git commit f10cd522c5fbfec9ae3cc01967868c9c2401ed23
+	 * (xen: disable PV spinlocks on HVM)
+	 */
+	if (xen_hvm_domain())
+		return;
+
 	BUILD_BUG_ON(sizeof(struct xen_spinlock) > sizeof(arch_spinlock_t));
 
 	pv_lock_ops.spin_is_locked = xen_spin_is_locked;
@@ -439,12 +464,12 @@ static int __init xen_spinlock_debugfs(void)
 	debugfs_create_u64("time_total", 0444, d_spin_debug,
 			   &spinlock_stats.time_total);
 
-	xen_debugfs_create_u32_array("histo_total", 0444, d_spin_debug,
-				     spinlock_stats.histo_spin_total, HISTO_BUCKETS + 1);
-	xen_debugfs_create_u32_array("histo_spinning", 0444, d_spin_debug,
-				     spinlock_stats.histo_spin_spinning, HISTO_BUCKETS + 1);
-	xen_debugfs_create_u32_array("histo_blocked", 0444, d_spin_debug,
-				     spinlock_stats.histo_spin_blocked, HISTO_BUCKETS + 1);
+	debugfs_create_u32_array("histo_total", 0444, d_spin_debug,
+				spinlock_stats.histo_spin_total, HISTO_BUCKETS + 1);
+	debugfs_create_u32_array("histo_spinning", 0444, d_spin_debug,
+				spinlock_stats.histo_spin_spinning, HISTO_BUCKETS + 1);
+	debugfs_create_u32_array("histo_blocked", 0444, d_spin_debug,
+				spinlock_stats.histo_spin_blocked, HISTO_BUCKETS + 1);
 
 	return 0;
 }

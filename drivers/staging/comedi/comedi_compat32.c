@@ -24,12 +24,11 @@
 
 */
 
-#define __NO_VERSION__
 #include <linux/uaccess.h>
+#include <linux/compat.h>
+#include <linux/fs.h>
 #include "comedi.h"
 #include "comedi_compat32.h"
-
-#ifdef CONFIG_COMPAT
 
 #define COMEDI32_CHANINFO _IOR(CIO, 3, struct comedi32_chaninfo_struct)
 #define COMEDI32_RANGEINFO _IOR(CIO, 8, struct comedi32_rangeinfo_struct)
@@ -271,7 +270,7 @@ static int compat_cmd(struct file *file, unsigned long arg)
 {
 	struct comedi_cmd __user *cmd;
 	struct comedi32_cmd_struct __user *cmd32;
-	int rc;
+	int rc, err;
 
 	cmd32 = compat_ptr(arg);
 	cmd = compat_alloc_user_space(sizeof(*cmd));
@@ -280,7 +279,15 @@ static int compat_cmd(struct file *file, unsigned long arg)
 	if (rc)
 		return rc;
 
-	return translated_ioctl(file, COMEDI_CMD, (unsigned long)cmd);
+	rc = translated_ioctl(file, COMEDI_CMD, (unsigned long)cmd);
+	if (rc == -EAGAIN) {
+		/* Special case: copy cmd back to user. */
+		err = put_compat_cmd(cmd32, cmd);
+		if (err)
+			rc = err;
+	}
+
+	return rc;
 }
 
 /* Handle 32-bit COMEDI_CMDTEST ioctl. */
@@ -459,5 +466,3 @@ long comedi_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	return raw_ioctl(file, cmd, arg);
 }
-
-#endif /* CONFIG_COMPAT */

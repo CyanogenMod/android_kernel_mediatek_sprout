@@ -33,7 +33,6 @@
 #include <linux/uaccess.h>
 #include <linux/timer.h>
 #include <linux/jiffies.h>
-#include <mach/hardware.h>
 
 #define DRIVER_NAME "imx2-wdt"
 
@@ -121,7 +120,7 @@ static void imx2_wdt_start(void)
 {
 	if (!test_and_set_bit(IMX2_WDT_STATUS_STARTED, &imx2_wdt.status)) {
 		/* at our first start we enable clock and do initialisations */
-		clk_enable(imx2_wdt.clk);
+		clk_prepare_enable(imx2_wdt.clk);
 
 		imx2_wdt_setup();
 	} else	/* delete the timer that pings the watchdog after close */
@@ -258,16 +257,9 @@ static int __init imx2_wdt_probe(struct platform_device *pdev)
 	struct resource *res;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res) {
-		dev_err(&pdev->dev, "can't get device resources\n");
-		return -ENODEV;
-	}
-
-	imx2_wdt.base = devm_request_and_ioremap(&pdev->dev, res);
-	if (!imx2_wdt.base) {
-		dev_err(&pdev->dev, "ioremap failed\n");
-		return -ENOMEM;
-	}
+	imx2_wdt.base = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(imx2_wdt.base))
+		return PTR_ERR(imx2_wdt.base);
 
 	imx2_wdt.clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(imx2_wdt.clk)) {
@@ -343,17 +335,7 @@ static struct platform_driver imx2_wdt_driver = {
 	},
 };
 
-static int __init imx2_wdt_init(void)
-{
-	return platform_driver_probe(&imx2_wdt_driver, imx2_wdt_probe);
-}
-module_init(imx2_wdt_init);
-
-static void __exit imx2_wdt_exit(void)
-{
-	platform_driver_unregister(&imx2_wdt_driver);
-}
-module_exit(imx2_wdt_exit);
+module_platform_driver_probe(imx2_wdt_driver, imx2_wdt_probe);
 
 MODULE_AUTHOR("Wolfram Sang");
 MODULE_DESCRIPTION("Watchdog driver for IMX2 and later");

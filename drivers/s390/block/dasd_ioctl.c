@@ -1,11 +1,10 @@
 /*
- * File...........: linux/drivers/s390/block/dasd_ioctl.c
  * Author(s)......: Holger Smolinski <Holger.Smolinski@de.ibm.com>
  *		    Horst Hummel <Horst.Hummel@de.ibm.com>
  *		    Carsten Otte <Cotte@de.ibm.com>
  *		    Martin Schwidefsky <schwidefsky@de.ibm.com>
  * Bugreports.to..: <Linux390@de.ibm.com>
- * (C) IBM Corporation, IBM Deutschland Entwicklung GmbH, 1999-2001
+ * Copyright IBM Corp. 1999, 2001
  *
  * i/o controls for the dasd driver.
  */
@@ -20,6 +19,7 @@
 #include <linux/slab.h>
 #include <asm/compat.h>
 #include <asm/ccwdev.h>
+#include <asm/schid.h>
 #include <asm/cmb.h>
 #include <asm/uaccess.h>
 
@@ -143,12 +143,12 @@ static int dasd_ioctl_resume(struct dasd_block *block)
 /*
  * performs formatting of _device_ according to _fdata_
  * Note: The discipline's format_function is assumed to deliver formatting
- * commands to format a single unit of the device. In terms of the ECKD
- * devices this means CCWs are generated to format a single track.
+ * commands to format multiple units of the device. In terms of the ECKD
+ * devices this means CCWs are generated to format multiple tracks.
  */
-static int dasd_format(struct dasd_block *block, struct format_data_t *fdata)
+static int
+dasd_format(struct dasd_block *block, struct format_data_t *fdata)
 {
-	struct dasd_ccw_req *cqr;
 	struct dasd_device *base;
 	int rc;
 
@@ -157,8 +157,8 @@ static int dasd_format(struct dasd_block *block, struct format_data_t *fdata)
 		return -EPERM;
 
 	if (base->state != DASD_STATE_BASIC) {
-		pr_warning("%s: The DASD cannot be formatted while it is "
-			   "enabled\n",  dev_name(&base->cdev->dev));
+		pr_warn("%s: The DASD cannot be formatted while it is enabled\n",
+			dev_name(&base->cdev->dev));
 		return -EBUSY;
 	}
 
@@ -178,21 +178,10 @@ static int dasd_format(struct dasd_block *block, struct format_data_t *fdata)
 		bdput(bdev);
 	}
 
-	while (fdata->start_unit <= fdata->stop_unit) {
-		cqr = base->discipline->format_device(base, fdata);
-		if (IS_ERR(cqr))
-			return PTR_ERR(cqr);
-		rc = dasd_sleep_on_interruptible(cqr);
-		dasd_sfree_request(cqr, cqr->memdev);
-		if (rc) {
-			if (rc != -ERESTARTSYS)
-				pr_err("%s: Formatting unit %d failed with "
-				       "rc=%d\n", dev_name(&base->cdev->dev),
-				       fdata->start_unit, rc);
-			return rc;
-		}
-		fdata->start_unit++;
-	}
+	rc = base->discipline->format_device(base, fdata);
+	if (rc)
+		return rc;
+
 	return 0;
 }
 
@@ -293,12 +282,12 @@ out:
 #else
 static int dasd_ioctl_reset_profile(struct dasd_block *block)
 {
-	return -ENOSYS;
+	return -ENOTTY;
 }
 
 static int dasd_ioctl_read_profile(struct dasd_block *block, void __user *argp)
 {
-	return -ENOSYS;
+	return -ENOTTY;
 }
 #endif
 
@@ -309,11 +298,12 @@ static int dasd_ioctl_information(struct dasd_block *block,
 				  unsigned int cmd, void __user *argp)
 {
 	struct dasd_information2_t *dasd_info;
-	unsigned long flags;
-	int rc;
+	struct subchannel_id sch_id;
+	struct ccw_dev_id dev_id;
 	struct dasd_device *base;
 	struct ccw_device *cdev;
-	struct ccw_dev_id dev_id;
+	unsigned long flags;
+	int rc;
 
 	base = block->base;
 	if (!base->discipline || !base->discipline->fill_info)
@@ -331,9 +321,10 @@ static int dasd_ioctl_information(struct dasd_block *block,
 
 	cdev = base->cdev;
 	ccw_device_get_id(cdev, &dev_id);
+	ccw_device_get_schid(cdev, &sch_id);
 
 	dasd_info->devno = dev_id.devno;
-	dasd_info->schid = _ccw_device_get_subchannel_number(base->cdev);
+	dasd_info->schid = sch_id.sch_no;
 	dasd_info->cu_type = cdev->id.cu_type;
 	dasd_info->cu_model = cdev->id.cu_model;
 	dasd_info->dev_type = cdev->id.dev_type;
@@ -499,12 +490,9 @@ int dasd_ioctl(struct block_device *bdev, fmode_t mode,
 		break;
 	default:
 		/* if the discipline has an ioctl method try it. */
-		if (base->discipline->ioctl) {
+		rc = -ENOTTY;
+		if (base->discipline->ioctl)
 			rc = base->discipline->ioctl(block, cmd, argp);
-			if (rc == -ENOIOCTLCMD)
-				rc = -EINVAL;
-		} else
-			rc = -EINVAL;
 	}
 	dasd_put_device(base);
 	return rc;

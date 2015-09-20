@@ -59,15 +59,12 @@ struct attribute_group *sm_create_sysfs_attributes(struct sm_ftl *ftl)
 	struct attribute_group *attr_group;
 	struct attribute **attributes;
 	struct sm_sysfs_attribute *vendor_attribute;
+	char *vendor;
 
-	int vendor_len = strnlen(ftl->cis_buffer + SM_CIS_VENDOR_OFFSET,
-					SM_SMALL_PAGE - SM_CIS_VENDOR_OFFSET);
-
-	char *vendor = kmalloc(vendor_len, GFP_KERNEL);
+	vendor = kstrndup(ftl->cis_buffer + SM_CIS_VENDOR_OFFSET,
+			  SM_SMALL_PAGE - SM_CIS_VENDOR_OFFSET, GFP_KERNEL);
 	if (!vendor)
 		goto error1;
-	memcpy(vendor, ftl->cis_buffer + SM_CIS_VENDOR_OFFSET, vendor_len);
-	vendor[vendor_len] = 0;
 
 	/* Initialize sysfs attributes */
 	vendor_attribute =
@@ -78,7 +75,7 @@ struct attribute_group *sm_create_sysfs_attributes(struct sm_ftl *ftl)
 	sysfs_attr_init(&vendor_attribute->dev_attr.attr);
 
 	vendor_attribute->data = vendor;
-	vendor_attribute->len = vendor_len;
+	vendor_attribute->len = strlen(vendor);
 	vendor_attribute->dev_attr.attr.name = "vendor";
 	vendor_attribute->dev_attr.attr.mode = S_IRUGO;
 	vendor_attribute->dev_attr.show = sm_attr_show;
@@ -346,7 +343,6 @@ static int sm_write_sector(struct sm_ftl *ftl,
 	ret = mtd_write_oob(mtd, sm_mkoffset(ftl, zone, block, boffset), &ops);
 
 	/* Now we assume that hardware will catch write bitflip errors */
-	/* If you are paranoid, use CONFIG_MTD_NAND_VERIFY_WRITE */
 
 	if (ret) {
 		dbg("write to block %d at zone %d, failed with error %d",
@@ -1108,7 +1104,7 @@ static int sm_flush(struct mtd_blktrans_dev *dev)
 }
 
 /* outside interface: device is released */
-static int sm_release(struct mtd_blktrans_dev *dev)
+static void sm_release(struct mtd_blktrans_dev *dev)
 {
 	struct sm_ftl *ftl = dev->priv;
 
@@ -1117,7 +1113,6 @@ static int sm_release(struct mtd_blktrans_dev *dev)
 	cancel_work_sync(&ftl->flush_work);
 	sm_cache_flush(ftl);
 	mutex_unlock(&ftl->mutex);
-	return 0;
 }
 
 /* outside interface: get geometry */

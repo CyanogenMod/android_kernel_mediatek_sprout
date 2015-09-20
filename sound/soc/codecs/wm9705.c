@@ -236,9 +236,7 @@ static int ac97_write(struct snd_soc_codec *codec, unsigned int reg,
 static int ac97_prepare(struct snd_pcm_substream *substream,
 			struct snd_soc_dai *dai)
 {
-	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	int reg;
 	u16 vra;
 
@@ -250,7 +248,7 @@ static int ac97_prepare(struct snd_pcm_substream *substream,
 	else
 		reg = AC97_PCM_LR_ADC_RATE;
 
-	return ac97_write(codec, reg, runtime->rate);
+	return ac97_write(codec, reg, substream->runtime->rate);
 }
 
 #define WM9705_AC97_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 | \
@@ -384,13 +382,13 @@ static struct snd_soc_codec_driver soc_codec_dev_wm9705 = {
 	.num_dapm_routes = ARRAY_SIZE(wm9705_audio_map),
 };
 
-static __devinit int wm9705_probe(struct platform_device *pdev)
+static int wm9705_probe(struct platform_device *pdev)
 {
 	return snd_soc_register_codec(&pdev->dev,
 			&soc_codec_dev_wm9705, wm9705_dai, ARRAY_SIZE(wm9705_dai));
 }
 
-static int __devexit wm9705_remove(struct platform_device *pdev)
+static int wm9705_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_codec(&pdev->dev);
 	return 0;
@@ -403,7 +401,7 @@ static struct platform_driver wm9705_codec_driver = {
 	},
 
 	.probe = wm9705_probe,
-	.remove = __devexit_p(wm9705_remove),
+	.remove = wm9705_remove,
 };
 
 module_platform_driver(wm9705_codec_driver);

@@ -10,10 +10,10 @@
  * more details.
  */
 
-#include "drmP.h"
-#include "drm_crtc.h"
-#include "drm_edid.h"
-#include "drm_crtc_helper.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_edid.h>
+#include <drm/drm_crtc_helper.h>
 #include "udl_drv.h"
 
 /* dummy connector to just get EDID,
@@ -66,7 +66,13 @@ static int udl_get_modes(struct drm_connector *connector)
 		return 0;
 	}
 
-	connector->display_info.raw_edid = (char *)edid;
+	/*
+	 * We only read the main block, but if the monitor reports extension
+	 * blocks then the drm edid code expects them to be present, so patch
+	 * the extension count to 0.
+	 */
+	edid->checksum += edid->extensions;
+	edid->extensions = 0;
 
 	/*
 	 * We only read the main block, but if the monitor reports extension
@@ -78,7 +84,6 @@ static int udl_get_modes(struct drm_connector *connector)
 
 	drm_mode_connector_update_edid_property(connector, edid);
 	ret = drm_add_edid_modes(connector, edid);
-	connector->display_info.raw_edid = NULL;
 	kfree(edid);
 	return ret;
 }
@@ -104,7 +109,8 @@ udl_detect(struct drm_connector *connector, bool force)
 	return connector_status_connected;
 }
 
-struct drm_encoder *udl_best_single_encoder(struct drm_connector *connector)
+static struct drm_encoder*
+udl_best_single_encoder(struct drm_connector *connector)
 {
 	int enc_id = connector->encoder_ids[0];
 	struct drm_mode_object *obj;
@@ -117,8 +123,9 @@ struct drm_encoder *udl_best_single_encoder(struct drm_connector *connector)
 	return encoder;
 }
 
-int udl_connector_set_property(struct drm_connector *connector, struct drm_property *property,
-			       uint64_t val)
+static int udl_connector_set_property(struct drm_connector *connector,
+				      struct drm_property *property,
+				      uint64_t val)
 {
 	return 0;
 }
@@ -130,13 +137,13 @@ static void udl_connector_destroy(struct drm_connector *connector)
 	kfree(connector);
 }
 
-struct drm_connector_helper_funcs udl_connector_helper_funcs = {
+static struct drm_connector_helper_funcs udl_connector_helper_funcs = {
 	.get_modes = udl_get_modes,
 	.mode_valid = udl_mode_valid,
 	.best_encoder = udl_best_single_encoder,
 };
 
-struct drm_connector_funcs udl_connector_funcs = {
+static struct drm_connector_funcs udl_connector_funcs = {
 	.dpms = drm_helper_connector_dpms,
 	.detect = udl_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
@@ -158,7 +165,7 @@ int udl_connector_init(struct drm_device *dev, struct drm_encoder *encoder)
 	drm_sysfs_connector_add(connector);
 	drm_mode_connector_attach_encoder(connector, encoder);
 
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				      dev->mode_config.dirty_info_property,
 				      1);
 	return 0;

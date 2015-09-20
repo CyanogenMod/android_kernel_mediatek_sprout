@@ -66,7 +66,7 @@ source "drivers/tty/serial/Kconfig"
 
 config TTY_PRINTK
 	bool "TTY driver to output user messages via printk"
-	depends on EXPERT
+	depends on EXPERT && TTY
 	default n
 	---help---
 	  If you say Y here, the support for writing user messages (i.e.
@@ -172,7 +172,7 @@ source "drivers/tty/hvc/Kconfig"
 
 config VIRTIO_CONSOLE
 	tristate "Virtio console"
-	depends on VIRTIO
+	depends on VIRTIO && TTY
 	select HVC_DRIVER
 	help
 	  Virtio console for use with lguest and other hypervisors.
@@ -405,6 +405,7 @@ config XILINX_HWICAP
 
 config R3964
 	tristate "Siemens R3964 line discipline"
+	depends on TTY
 	---help---
 	  This driver allows synchronous communication with devices using the
 	  Siemens R3964 packet protocol. Unless you are dealing with special
@@ -431,8 +432,8 @@ config APPLICOM
 	  If unsure, say N.
 
 config SONYPI
-	tristate "Sony Vaio Programmable I/O Control Device support (EXPERIMENTAL)"
-	depends on EXPERIMENTAL && X86 && PCI && INPUT && !64BIT
+	tristate "Sony Vaio Programmable I/O Control Device support"
+	depends on X86 && PCI && INPUT && !64BIT
 	---help---
 	  This driver enables access to the Sony Programmable I/O Control
 	  Device which can be found in many (all ?) Sony Vaio laptops.
@@ -452,7 +453,7 @@ source "drivers/char/pcmcia/Kconfig"
 
 config MWAVE
 	tristate "ACP Modem (Mwave) support"
-	depends on X86
+	depends on X86 && TTY
 	select SERIAL_8250
 	---help---
 	  The ACP modem (Mwave) for Linux is a WinModem. It is composed of a
@@ -579,7 +580,7 @@ source "drivers/char/tpm/Kconfig"
 
 config TELCLOCK
 	tristate "Telecom clock driver for ATCA SBC"
-	depends on EXPERIMENTAL && X86
+	depends on X86
 	default n
 	help
 	  The telecom clock device is specific to the MPCBL0010 and MPCBL0050
@@ -601,14 +602,6 @@ config DCC_TTY
 	depends on ARM
 
 source "drivers/s390/char/Kconfig"
-
-config RAMOOPS
-	tristate "Log panic/oops to a RAM buffer"
-	depends on HAS_IOMEM
-	default n
-	help
-	  This enables panic and oops messages to be logged to a circular
-	  buffer in RAM where it can be read back at some later point.
 
 config MSM_SMD_PKT
 	bool "Enable device interface for some SMD packet ports"

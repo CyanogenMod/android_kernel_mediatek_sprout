@@ -1,6 +1,7 @@
 #ifndef __ASMARM_HWCAP_H
 #define __ASMARM_HWCAP_H
 
+<<<<<<< HEAD
 /*
  * HWCAP flags - for elf_hwcap (in kernel) and AT_HWCAP
  */
@@ -25,8 +26,10 @@
 #define HWCAP_IDIVT	(1 << 18)
 #define HWCAP_VFPD32	(1 << 19)	/* set if VFP has 32 regs (not 16) */
 #define HWCAP_IDIV	(HWCAP_IDIVA | HWCAP_IDIVT)
+=======
+#include <uapi/asm/hwcap.h>
+>>>>>>> v3.10.88
 
-#if defined(__KERNEL__)
 #if !defined(__ASSEMBLY__)
 /*
  * This yields a mask that user programs can use to figure out what
@@ -35,6 +38,4 @@
 #define ELF_HWCAP	(elf_hwcap)
 extern unsigned int elf_hwcap;
 #endif
-#endif
-
 #endif

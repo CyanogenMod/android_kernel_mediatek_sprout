@@ -85,43 +85,38 @@ static struct dentry *get_next_positive_subdir(struct dentry *prev,
 {
 	struct autofs_sb_info *sbi = autofs4_sbi(root->d_sb);
 	struct list_head *next;
-	struct dentry *p, *q;
+	struct dentry *q;
 
 	spin_lock(&sbi->lookup_lock);
+	spin_lock(&root->d_lock);
 
-	if (prev == NULL) {
-		spin_lock(&root->d_lock);
+	if (prev)
+		next = prev->d_child.next;
+	else {
 		prev = dget_dlock(root);
 		next = prev->d_subdirs.next;
-		p = prev;
-		goto start;
 	}
 
-	p = prev;
-	spin_lock(&p->d_lock);
-again:
-	next = p->d_u.d_child.next;
-start:
+cont:
 	if (next == &root->d_subdirs) {
-		spin_unlock(&p->d_lock);
+		spin_unlock(&root->d_lock);
 		spin_unlock(&sbi->lookup_lock);
 		dput(prev);
 		return NULL;
 	}
 
-	q = list_entry(next, struct dentry, d_u.d_child);
+	q = list_entry(next, struct dentry, d_child);
 
 	spin_lock_nested(&q->d_lock, DENTRY_D_LOCK_NESTED);
-	/* Negative dentry - try next */
-	if (!simple_positive(q)) {
-		spin_unlock(&p->d_lock);
-		lock_set_subclass(&q->d_lock.dep_map, 0, _RET_IP_);
-		p = q;
-		goto again;
+	/* Already gone or negative dentry (under construction) - try next */
+	if (q->d_count == 0 || !simple_positive(q)) {
+		spin_unlock(&q->d_lock);
+		next = q->d_child.next;
+		goto cont;
 	}
 	dget_dlock(q);
 	spin_unlock(&q->d_lock);
-	spin_unlock(&p->d_lock);
+	spin_unlock(&root->d_lock);
 	spin_unlock(&sbi->lookup_lock);
 
 	dput(prev);
@@ -166,13 +161,13 @@ again:
 				goto relock;
 			}
 			spin_unlock(&p->d_lock);
-			next = p->d_u.d_child.next;
+			next = p->d_child.next;
 			p = parent;
 			if (next != &parent->d_subdirs)
 				break;
 		}
 	}
-	ret = list_entry(next, struct dentry, d_u.d_child);
+	ret = list_entry(next, struct dentry, d_child);
 
 	spin_lock_nested(&ret->d_lock, DENTRY_D_LOCK_NESTED);
 	/* Negative dentry - try next */
@@ -395,11 +390,6 @@ struct dentry *autofs4_expire_indirect(struct super_block *sb,
 			DPRINTK("checking mountpoint %p %.*s",
 				dentry, (int)dentry->d_name.len, dentry->d_name.name);
 
-			/* Path walk currently on this dentry? */
-			ino_count = atomic_read(&ino->count) + 2;
-			if (dentry->d_count > ino_count)
-				goto next;
-
 			/* Can we umount this guy */
 			if (autofs4_mount_busy(mnt, dentry))
 				goto next;
@@ -457,7 +447,7 @@ found:
 	spin_lock(&sbi->lookup_lock);
 	spin_lock(&expired->d_parent->d_lock);
 	spin_lock_nested(&expired->d_lock, DENTRY_D_LOCK_NESTED);
-	list_move(&expired->d_parent->d_subdirs, &expired->d_u.d_child);
+	list_move(&expired->d_parent->d_subdirs, &expired->d_child);
 	spin_unlock(&expired->d_lock);
 	spin_unlock(&expired->d_parent->d_lock);
 	spin_unlock(&sbi->lookup_lock);
@@ -549,15 +539,6 @@ int autofs4_do_expire_multi(struct super_block *sb, struct vfsmount *mnt,
 
 		spin_lock(&sbi->fs_lock);
 		ino->flags &= ~AUTOFS_INF_EXPIRING;
-		spin_lock(&dentry->d_lock);
-		if (!ret) {
-			if ((IS_ROOT(dentry) ||
-			    (autofs_type_indirect(sbi->type) &&
-			     IS_ROOT(dentry->d_parent))) &&
-			    !(dentry->d_flags & DCACHE_NEED_AUTOMOUNT))
-				__managed_dentry_set_automount(dentry);
-		}
-		spin_unlock(&dentry->d_lock);
 		complete_all(&ino->expire_complete);
 		spin_unlock(&sbi->fs_lock);
 		dput(dentry);

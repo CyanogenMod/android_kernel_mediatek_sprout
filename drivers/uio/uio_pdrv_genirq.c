@@ -102,7 +102,7 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 	int ret = -EINVAL;
 	int i;
 
-	if (!uioinfo) {
+	if (pdev->dev.of_node) {
 		int irq;
 
 		/* alloc uioinfo for one device */
@@ -146,6 +146,14 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 	priv->flags = 0; /* interrupt is enabled to begin with */
 	priv->pdev = pdev;
 
+	if (!uioinfo->irq) {
+		ret = platform_get_irq(pdev, 0);
+		if (ret < 0) {
+			dev_err(&pdev->dev, "failed to get IRQ\n");
+			goto bad0;
+		}
+		uioinfo->irq = ret;
+	}
 	uiomem = &uioinfo->mem[0];
 
 	for (i = 0; i < pdev->num_resources; ++i) {
@@ -164,6 +172,7 @@ static int uio_pdrv_genirq_probe(struct platform_device *pdev)
 		uiomem->memtype = UIO_MEM_PHYS;
 		uiomem->addr = r->start;
 		uiomem->size = resource_size(r);
+		uiomem->name = r->name;
 		++uiomem;
 	}
 

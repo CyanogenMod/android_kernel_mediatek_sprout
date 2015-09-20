@@ -65,12 +65,6 @@
  */
 #define TMIO_MMC_SDIO_IRQ		(1 << 2)
 /*
- * Some platforms can detect card insertion events with controller powered
- * down, using a GPIO IRQ, in which case they have to fill in cd_irq, cd_gpio,
- * and cd_flags fields of struct tmio_mmc_data.
- */
-#define TMIO_MMC_HAS_COLD_CD		(1 << 3)
-/*
  * Some controllers require waiting for the SD bus to become
  * idle before writing to some registers.
  */
@@ -101,6 +95,7 @@ struct tmio_mmc_host;
 struct tmio_mmc_data {
 	unsigned int			hclk;
 	unsigned long			capabilities;
+	unsigned long			capabilities2;
 	unsigned long			flags;
 	u32				ocr_mask;	/* available voltages */
 	struct tmio_mmc_dma		*dma;
@@ -110,19 +105,10 @@ struct tmio_mmc_data {
 	void (*set_clk_div)(struct platform_device *host, int state);
 	int (*get_cd)(struct platform_device *host);
 	int (*write16_hook)(struct tmio_mmc_host *host, int addr);
+	/* clock management callbacks */
+	int (*clk_enable)(struct platform_device *pdev, unsigned int *f);
+	void (*clk_disable)(struct platform_device *pdev);
 };
-
-/*
- * This function is deprecated and will be removed soon. Please, convert your
- * platform to use drivers/mmc/core/cd-gpio.c
- */
-#include <linux/mmc/host.h>
-static inline void tmio_mmc_cd_wakeup(struct tmio_mmc_data *pdata)
-{
-	if (pdata)
-		mmc_detect_change(dev_get_drvdata(pdata->dev),
-				  msecs_to_jiffies(100));
-}
 
 /*
  * data for the NAND controller

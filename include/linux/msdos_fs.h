@@ -1,10 +1,9 @@
 #ifndef _LINUX_MSDOS_FS_H
 #define _LINUX_MSDOS_FS_H
 
-#include <linux/types.h>
-#include <linux/magic.h>
-#include <asm/byteorder.h>
+#include <uapi/linux/msdos_fs.h>
 
+<<<<<<< HEAD
 /*
  * The MS-DOS filesystem constants/structures
  */
@@ -176,10 +175,11 @@ struct msdos_dir_slot {
 };
 
 #ifdef __KERNEL__
+=======
+>>>>>>> v3.10.88
 /* media of boot sector */
 static inline int fat_valid_media(u8 media)
 {
 	return 0xf8 <= media || media == 0xf0;
 }
-#endif /* !__KERNEL__ */
 #endif /* !_LINUX_MSDOS_FS_H */

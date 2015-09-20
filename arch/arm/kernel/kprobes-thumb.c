@@ -163,9 +163,9 @@ t32_decode_ldmstm(kprobe_opcode_t insn, struct arch_specific_insn *asi)
 	enum kprobe_insn ret = kprobe_decode_ldmstm(insn, asi);
 
 	/* Fixup modified instruction to have halfwords in correct order...*/
-	insn = asi->insn[0];
-	((u16 *)asi->insn)[0] = insn >> 16;
-	((u16 *)asi->insn)[1] = insn & 0xffff;
+	insn = __mem_to_opcode_arm(asi->insn[0]);
+	((u16 *)asi->insn)[0] = __opcode_to_mem_thumb16(insn >> 16);
+	((u16 *)asi->insn)[1] = __opcode_to_mem_thumb16(insn & 0xffff);
 
 	return ret;
 }
@@ -660,7 +660,7 @@ static const union decode_item t32_table_1111_100x[] = {
 	/* LDRSB (literal)	1111 1001 x001 1111 xxxx xxxx xxxx xxxx */
 	/* LDRH (literal)	1111 1000 x011 1111 xxxx xxxx xxxx xxxx */
 	/* LDRSH (literal)	1111 1001 x011 1111 xxxx xxxx xxxx xxxx */
-	DECODE_EMULATEX	(0xfe5f0000, 0xf81f0000, t32_simulate_ldr_literal,
+	DECODE_SIMULATEX(0xfe5f0000, 0xf81f0000, t32_simulate_ldr_literal,
 						 REGS(PC, NOSPPCX, 0, 0, 0)),
 
 	/* STRB (immediate)	1111 1000 0000 xxxx xxxx 1xxx xxxx xxxx */
@@ -1153,7 +1153,7 @@ t16_decode_hiregs(kprobe_opcode_t insn, struct arch_specific_insn *asi)
 {
 	insn &= ~0x00ff;
 	insn |= 0x001; /* Set Rdn = R1 and Rm = R0 */
-	((u16 *)asi->insn)[0] = insn;
+	((u16 *)asi->insn)[0] = __opcode_to_mem_thumb16(insn);
 	asi->insn_handler = t16_emulate_hiregs;
 	return INSN_GOOD;
 }
@@ -1182,8 +1182,10 @@ t16_decode_push(kprobe_opcode_t insn, struct arch_specific_insn *asi)
 	 * and call it with R9=SP and LR in the register list represented
 	 * by R8.
 	 */
-	((u16 *)asi->insn)[0] = 0xe929;		/* 1st half STMDB R9!,{} */
-	((u16 *)asi->insn)[1] = insn & 0x1ff;	/* 2nd half (register list) */
+	/* 1st half STMDB R9!,{} */
+	((u16 *)asi->insn)[0] = __opcode_to_mem_thumb16(0xe929);
+	/* 2nd half (register list) */
+	((u16 *)asi->insn)[1] = __opcode_to_mem_thumb16(insn & 0x1ff);
 	asi->insn_handler = t16_emulate_push;
 	return INSN_GOOD;
 }
@@ -1232,8 +1234,10 @@ t16_decode_pop(kprobe_opcode_t insn, struct arch_specific_insn *asi)
 	 * and call it with R9=SP and PC in the register list represented
 	 * by R8.
 	 */
-	((u16 *)asi->insn)[0] = 0xe8b9;		/* 1st half LDMIA R9!,{} */
-	((u16 *)asi->insn)[1] = insn & 0x1ff;	/* 2nd half (register list) */
+	/* 1st half LDMIA R9!,{} */
+	((u16 *)asi->insn)[0] = __opcode_to_mem_thumb16(0xe8b9);
+	/* 2nd half (register list) */
+	((u16 *)asi->insn)[1] = __opcode_to_mem_thumb16(insn & 0x1ff);
 	asi->insn_handler = insn & 0x100 ? t16_emulate_pop_pc
 					 : t16_emulate_pop_nopc;
 	return INSN_GOOD;

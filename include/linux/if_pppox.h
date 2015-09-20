@@ -12,20 +12,13 @@
  *		2 of the License, or (at your option) any later version.
  *
  */
-
 #ifndef __LINUX_IF_PPPOX_H
 #define __LINUX_IF_PPPOX_H
 
-
-#include <linux/types.h>
-#include <asm/byteorder.h>
-
-#include <linux/socket.h>
-#include <linux/if_ether.h>
-#ifdef  __KERNEL__
 #include <linux/if.h>
 #include <linux/netdevice.h>
 #include <linux/ppp_channel.h>
+<<<<<<< HEAD
 #endif /* __KERNEL__ */
 #include <linux/if_pppol2tp.h>
 #include <linux/if_pppolac.h>
@@ -150,7 +143,10 @@ struct pppoe_hdr {
 #define PPPOE_SES_HLEN	8
 
 #ifdef __KERNEL__
+=======
+>>>>>>> v3.10.88
 #include <linux/skbuff.h>
+#include <uapi/linux/if_pppox.h>
 
 static inline struct pppoe_hdr *pppoe_hdr(const struct sk_buff *skb)
 {
@@ -244,7 +240,5 @@ enum {
     PPPOX_ZOMBIE	= 8,  /* dead, but still bound to ppp device */
     PPPOX_DEAD		= 16  /* dead, useless, please clean me up!*/
 };
-
-#endif /* __KERNEL__ */
 
 #endif /* !(__LINUX_IF_PPPOX_H) */

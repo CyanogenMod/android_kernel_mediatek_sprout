@@ -47,8 +47,6 @@
 #define DBG(LEVEL, ...)
 #endif
 
-#define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
-
 inline void
 sigset_32to64(sigset_t *s64, compat_sigset_t *s32)
 {
@@ -62,6 +60,7 @@ sigset_64to32(compat_sigset_t *s32, sigset_t *s64)
 	s32->sig[1] = (s64->sig[0] >> 32) & 0xffffffffUL;
 }
 
+<<<<<<< HEAD
 static int
 put_sigset32(compat_sigset_t __user *up, sigset_t *set, size_t sz)
 {
@@ -185,6 +184,8 @@ do_sigaltstack32 (const compat_stack_t __user *uss32, compat_stack_t __user *uos
 	return ret;
 }
 
+=======
+>>>>>>> v3.10.88
 long
 restore_sigcontext32(struct compat_sigcontext __user *sc, struct compat_regfile __user * rf,
 		struct pt_regs *regs)
@@ -501,22 +502,3 @@ copy_siginfo_to_user32 (compat_siginfo_t __user *to, siginfo_t *from)
 	}
 	return err;
 }
-
-asmlinkage long compat_sys_rt_sigqueueinfo(int pid, int sig,
-	struct compat_siginfo __user *uinfo)
-{
-	siginfo_t info;
-
-	if (copy_siginfo_from_user32(&info, uinfo))
-		return -EFAULT;
-
-	/* Not even root can pretend to send signals from the kernel.
-	   Nor can they impersonate a kill(), which adds source info.  */
-	if (info.si_code >= 0)
-		return -EPERM;
-	info.si_signo = sig;
-
-	/* POSIX.1b doesn't mention process groups.  */
-	return kill_proc_info(sig, &info, pid);
-}
-

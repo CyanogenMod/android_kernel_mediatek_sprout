@@ -3,7 +3,6 @@
 
 #include <linux/kernel.h>
 #include <linux/cpu.h>
-#include <linux/cpuidle.h>
 #include <linux/thermal.h>
 #include <asm/acpi.h>
 
@@ -59,16 +58,11 @@ struct acpi_processor_cx {
 	u8 entry_method;
 	u8 index;
 	u32 latency;
-	u32 latency_ticks;
-	u32 power;
-	u32 usage;
-	u64 time;
 	u8 bm_sts_skip;
 	char desc[ACPI_CX_DESC_LEN];
 };
 
 struct acpi_processor_power {
-	struct cpuidle_device dev;
 	struct acpi_processor_cx *state;
 	unsigned long bm_check_timestamp;
 	u32 default_state;
@@ -241,6 +235,9 @@ extern void acpi_processor_unregister_performance(struct
          if a _PPC object exists, rmmod is disallowed then */
 int acpi_processor_notify_smm(struct module *calling_module);
 
+/* parsing the _P* objects. */
+extern int acpi_processor_get_performance_info(struct acpi_processor *pr);
+
 /* for communication between multiple parts of the processor kernel module */
 DECLARE_PER_CPU(struct acpi_processor *, processors);
 extern struct acpi_processor_errata errata;
@@ -328,15 +325,19 @@ extern void acpi_processor_reevaluate_tstate(struct acpi_processor *pr,
 extern const struct file_operations acpi_processor_throttling_fops;
 extern void acpi_processor_throttling_init(void);
 /* in processor_idle.c */
-int acpi_processor_power_init(struct acpi_processor *pr,
-			      struct acpi_device *device);
+int acpi_processor_power_init(struct acpi_processor *pr);
+int acpi_processor_power_exit(struct acpi_processor *pr);
 int acpi_processor_cst_has_changed(struct acpi_processor *pr);
 int acpi_processor_hotplug(struct acpi_processor *pr);
-int acpi_processor_power_exit(struct acpi_processor *pr,
-			      struct acpi_device *device);
-int acpi_processor_suspend(struct acpi_device * device, pm_message_t state);
-int acpi_processor_resume(struct acpi_device * device);
 extern struct cpuidle_driver acpi_idle_driver;
+
+#ifdef CONFIG_PM_SLEEP
+void acpi_processor_syscore_init(void);
+void acpi_processor_syscore_exit(void);
+#else
+static inline void acpi_processor_syscore_init(void) {}
+static inline void acpi_processor_syscore_exit(void) {}
+#endif
 
 /* in processor_thermal.c */
 int acpi_processor_get_limit_info(struct acpi_processor *pr);

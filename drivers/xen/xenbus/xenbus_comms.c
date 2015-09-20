@@ -224,7 +224,7 @@ int xb_init_comms(void)
 		int err;
 		err = bind_evtchn_to_irqhandler(xen_store_evtchn, wake_waiting,
 						0, "xenbus", &xb_waitq);
-		if (err <= 0) {
+		if (err < 0) {
 			printk(KERN_ERR "XENBUS request irq failed %i\n", err);
 			return err;
 		}
@@ -233,4 +233,10 @@ int xb_init_comms(void)
 	}
 
 	return 0;
+}
+
+void xb_deinit_comms(void)
+{
+	unbind_from_irqhandler(xenbus_irq, &xb_waitq);
+	xenbus_irq = 0;
 }

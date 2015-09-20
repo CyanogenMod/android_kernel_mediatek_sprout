@@ -31,6 +31,8 @@
 #include "iscsi_target.h"
 #include "iscsi_target_parameters.h"
 
+#include <target/iscsi/iscsi_transport.h>
+
 struct iscsi_portal_group *iscsit_alloc_portal_group(struct iscsi_tiqn *tiqn, u16 tpgt)
 {
 	struct iscsi_portal_group *tpg;
@@ -136,7 +138,7 @@ struct iscsi_portal_group *iscsit_get_tpg_from_np(
 	list_for_each_entry(tpg, &tiqn->tiqn_tpg_list, tpg_list) {
 
 		spin_lock(&tpg->tpg_state_lock);
-		if (tpg->tpg_state == TPG_STATE_FREE) {
+		if (tpg->tpg_state != TPG_STATE_ACTIVE) {
 			spin_unlock(&tpg->tpg_state_lock);
 			continue;
 		}
@@ -173,13 +175,16 @@ void iscsit_put_tpg(struct iscsi_portal_group *tpg)
 
 static void iscsit_clear_tpg_np_login_thread(
 	struct iscsi_tpg_np *tpg_np,
-	struct iscsi_portal_group *tpg)
+	struct iscsi_portal_group *tpg,
+	bool shutdown)
 {
 	if (!tpg_np->tpg_np) {
 		pr_err("struct iscsi_tpg_np->tpg_np is NULL!\n");
 		return;
 	}
 
+	if (shutdown)
+		tpg_np->tpg_np->enabled = false;
 	iscsit_reset_np_thread(tpg_np->tpg_np, tpg_np, tpg);
 }
 
@@ -195,7 +200,7 @@ void iscsit_clear_tpg_np_login_threads(
 			continue;
 		}
 		spin_unlock(&tpg->tpg_np_lock);
-		iscsit_clear_tpg_np_login_thread(tpg_np, tpg);
+		iscsit_clear_tpg_np_login_thread(tpg_np, tpg, false);
 		spin_lock(&tpg->tpg_np_lock);
 	}
 	spin_unlock(&tpg->tpg_np_lock);
@@ -303,6 +308,7 @@ int iscsit_tpg_enable_portal_group(struct iscsi_portal_group *tpg)
 {
 	struct iscsi_param *param;
 	struct iscsi_tiqn *tiqn = tpg->tpg_tiqn;
+	int ret;
 
 	spin_lock(&tpg->tpg_state_lock);
 	if (tpg->tpg_state == TPG_STATE_ACTIVE) {
@@ -319,19 +325,19 @@ int iscsit_tpg_enable_portal_group(struct iscsi_portal_group *tpg)
 	param = iscsi_find_param_from_key(AUTHMETHOD, tpg->param_list);
 	if (!param) {
 		spin_unlock(&tpg->tpg_state_lock);
-		return -ENOMEM;
+		return -EINVAL;
 	}
 
 	if (ISCSI_TPG_ATTRIB(tpg)->authentication) {
-		if (!strcmp(param->value, NONE))
-			if (iscsi_update_param_value(param, CHAP) < 0) {
-				spin_unlock(&tpg->tpg_state_lock);
-				return -ENOMEM;
-			}
-		if (iscsit_ta_authentication(tpg, 1) < 0) {
-			spin_unlock(&tpg->tpg_state_lock);
-			return -ENOMEM;
+		if (!strcmp(param->value, NONE)) {
+			ret = iscsi_update_param_value(param, CHAP);
+			if (ret)
+				goto err;
 		}
+
+		ret = iscsit_ta_authentication(tpg, 1);
+		if (ret < 0)
+			goto err;
 	}
 
 	tpg->tpg_state = TPG_STATE_ACTIVE;
@@ -344,6 +350,10 @@ int iscsit_tpg_enable_portal_group(struct iscsi_portal_group *tpg)
 	spin_unlock(&tiqn->tiqn_tpg_lock);
 
 	return 0;
+
+err:
+	spin_unlock(&tpg->tpg_state_lock);
+	return ret;
 }
 
 int iscsit_tpg_disable_portal_group(struct iscsi_portal_group *tpg, int force)
@@ -417,6 +427,35 @@ struct iscsi_tpg_np *iscsit_tpg_locate_child_np(
 	return NULL;
 }
 
+static bool iscsit_tpg_check_network_portal(
+	struct iscsi_tiqn *tiqn,
+	struct __kernel_sockaddr_storage *sockaddr,
+	int network_transport)
+{
+	struct iscsi_portal_group *tpg;
+	struct iscsi_tpg_np *tpg_np;
+	struct iscsi_np *np;
+	bool match = false;
+
+	spin_lock(&tiqn->tiqn_tpg_lock);
+	list_for_each_entry(tpg, &tiqn->tiqn_tpg_list, tpg_list) {
+
+		spin_lock(&tpg->tpg_np_lock);
+		list_for_each_entry(tpg_np, &tpg->tpg_gnp_list, tpg_np_list) {
+			np = tpg_np->tpg_np;
+
+			match = iscsit_check_np_match(sockaddr, np,
+						network_transport);
+			if (match == true)
+				break;
+		}
+		spin_unlock(&tpg->tpg_np_lock);
+	}
+	spin_unlock(&tiqn->tiqn_tpg_lock);
+
+	return match;
+}
+
 struct iscsi_tpg_np *iscsit_tpg_add_network_portal(
 	struct iscsi_portal_group *tpg,
 	struct __kernel_sockaddr_storage *sockaddr,
@@ -426,6 +465,16 @@ struct iscsi_tpg_np *iscsit_tpg_add_network_portal(
 {
 	struct iscsi_np *np;
 	struct iscsi_tpg_np *tpg_np;
+
+	if (!tpg_np_parent) {
+		if (iscsit_tpg_check_network_portal(tpg->tpg_tiqn, sockaddr,
+				network_transport) == true) {
+			pr_err("Network Portal: %s already exists on a"
+				" different TPG on %s\n", ip_str,
+				tpg->tpg_tiqn->tiqn);
+			return ERR_PTR(-EEXIST);
+		}
+	}
 
 	tpg_np = kzalloc(sizeof(struct iscsi_tpg_np), GFP_KERNEL);
 	if (!tpg_np) {
@@ -464,7 +513,7 @@ struct iscsi_tpg_np *iscsit_tpg_add_network_portal(
 
 	pr_debug("CORE[%s] - Added Network Portal: %s:%hu,%hu on %s\n",
 		tpg->tpg_tiqn->tiqn, np->np_ip, np->np_port, tpg->tpgt,
-		(np->np_network_transport == ISCSI_TCP) ? "TCP" : "SCTP");
+		np->np_transport->name);
 
 	return tpg_np;
 }
@@ -474,11 +523,11 @@ static int iscsit_tpg_release_np(
 	struct iscsi_portal_group *tpg,
 	struct iscsi_np *np)
 {
-	iscsit_clear_tpg_np_login_thread(tpg_np, tpg);
+	iscsit_clear_tpg_np_login_thread(tpg_np, tpg, true);
 
 	pr_debug("CORE[%s] - Removed Network Portal: %s:%hu,%hu on %s\n",
 		tpg->tpg_tiqn->tiqn, np->np_ip, np->np_port, tpg->tpgt,
-		(np->np_network_transport == ISCSI_TCP) ? "TCP" : "SCTP");
+		np->np_transport->name);
 
 	tpg_np->tpg_np = NULL;
 	tpg_np->tpg = NULL;
@@ -558,7 +607,7 @@ int iscsit_ta_authentication(struct iscsi_portal_group *tpg, u32 authentication)
 	if ((authentication != 1) && (authentication != 0)) {
 		pr_err("Illegal value for authentication parameter:"
 			" %u, ignoring request.\n", authentication);
-		return -1;
+		return -EINVAL;
 	}
 
 	memset(buf1, 0, sizeof(buf1));
@@ -593,7 +642,7 @@ int iscsit_ta_authentication(struct iscsi_portal_group *tpg, u32 authentication)
 	} else {
 		snprintf(buf1, sizeof(buf1), "%s", param->value);
 		none = strstr(buf1, NONE);
-		if ((none))
+		if (none)
 			goto out;
 		strncat(buf1, ",", strlen(","));
 		strncat(buf1, NONE, strlen(NONE));

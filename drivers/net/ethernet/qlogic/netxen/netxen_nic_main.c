@@ -60,9 +60,9 @@ static int auto_fw_reset = AUTO_FW_RESET_ENABLED;
 module_param(auto_fw_reset, int, 0644);
 MODULE_PARM_DESC(auto_fw_reset,"Auto firmware reset (0=disabled, 1=enabled");
 
-static int __devinit netxen_nic_probe(struct pci_dev *pdev,
+static int netxen_nic_probe(struct pci_dev *pdev,
 		const struct pci_device_id *ent);
-static void __devexit netxen_nic_remove(struct pci_dev *pdev);
+static void netxen_nic_remove(struct pci_dev *pdev);
 static int netxen_nic_open(struct net_device *netdev);
 static int netxen_nic_close(struct net_device *netdev);
 static netdev_tx_t netxen_nic_xmit_frame(struct sk_buff *,
@@ -90,7 +90,7 @@ static irqreturn_t netxen_intr(int irq, void *data);
 static irqreturn_t netxen_msi_intr(int irq, void *data);
 static irqreturn_t netxen_msix_intr(int irq, void *data);
 
-static void netxen_free_vlan_ip_list(struct netxen_adapter *);
+static void netxen_free_ip_list(struct netxen_adapter *, bool);
 static void netxen_restore_indev_addr(struct net_device *dev, unsigned long);
 static struct rtnl_link_stats64 *netxen_nic_get_stats(struct net_device *dev,
 						      struct rtnl_link_stats64 *stats);
@@ -501,12 +501,11 @@ netxen_read_mac_addr(struct netxen_adapter *adapter)
 	for (i = 0; i < 6; i++)
 		netdev->dev_addr[i] = *(p + 5 - i);
 
-	memcpy(netdev->perm_addr, netdev->dev_addr, netdev->addr_len);
 	memcpy(adapter->mac_addr, netdev->dev_addr, netdev->addr_len);
 
 	/* set station address */
 
-	if (!is_valid_ether_addr(netdev->perm_addr))
+	if (!is_valid_ether_addr(netdev->dev_addr))
 		dev_warn(&pdev->dev, "Bad MAC address %pM.\n", netdev->dev_addr);
 
 	return 0;
@@ -1184,6 +1183,7 @@ netxen_nic_attach(struct netxen_adapter *adapter)
 	int err, ring;
 	struct nx_host_rds_ring *rds_ring;
 	struct nx_host_tx_ring *tx_ring;
+	u32 capab2;
 
 	if (adapter->is_up == NETXEN_ADAPTER_UP_MAGIC)
 		return 0;
@@ -1191,6 +1191,13 @@ netxen_nic_attach(struct netxen_adapter *adapter)
 	err = netxen_init_firmware(adapter);
 	if (err)
 		return err;
+
+	adapter->flags &= ~NETXEN_FW_MSS_CAP;
+	if (adapter->capabilities & NX_FW_CAPABILITY_MORE_CAPS) {
+		capab2 = NXRD32(adapter, CRB_FW_CAPABILITIES_2);
+		if (capab2 & NX_FW_CAPABILITY_2_LRO_MAX_TCP_SEG)
+			adapter->flags |= NETXEN_FW_MSS_CAP;
+	}
 
 	err = netxen_napi_add(adapter, netdev);
 	if (err)
@@ -1338,7 +1345,7 @@ netxen_setup_netdev(struct netxen_adapter *adapter,
 	}
 
 	if (adapter->capabilities & NX_FW_CAPABILITY_FVLANTX)
-		netdev->hw_features |= NETIF_F_HW_VLAN_TX;
+		netdev->hw_features |= NETIF_F_HW_VLAN_CTAG_TX;
 
 	if (adapter->capabilities & NX_FW_CAPABILITY_HW_LRO)
 		netdev->hw_features |= NETIF_F_LRO;
@@ -1378,7 +1385,7 @@ static void netxen_mask_aer_correctable(struct netxen_adapter *adapter)
 		adapter->ahw.board_type != NETXEN_BRDTYPE_P3_10G_TP)
 		return;
 
-	if (root->pcie_type != PCI_EXP_TYPE_ROOT_PORT)
+	if (pci_pcie_type(root) != PCI_EXP_TYPE_ROOT_PORT)
 		return;
 
 	aer_pos = pci_find_ext_capability(root, PCI_EXT_CAP_ID_ERR);
@@ -1389,7 +1396,7 @@ static void netxen_mask_aer_correctable(struct netxen_adapter *adapter)
 }
 #endif
 
-static int __devinit
+static int
 netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *netdev = NULL;
@@ -1443,7 +1450,7 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	spin_lock_init(&adapter->tx_clean_lock);
 	INIT_LIST_HEAD(&adapter->mac_list);
-	INIT_LIST_HEAD(&adapter->vlan_ip_list);
+	INIT_LIST_HEAD(&adapter->ip_list);
 
 	err = netxen_setup_pci_map(adapter);
 	if (err)
@@ -1561,7 +1568,7 @@ void netxen_cleanup_minidump(struct netxen_adapter *adapter)
 	}
 }
 
-static void __devexit netxen_nic_remove(struct pci_dev *pdev)
+static void netxen_nic_remove(struct pci_dev *pdev)
 {
 	struct netxen_adapter *adapter;
 	struct net_device *netdev;
@@ -1578,7 +1585,7 @@ static void __devexit netxen_nic_remove(struct pci_dev *pdev)
 
 	cancel_work_sync(&adapter->tx_timeout_task);
 
-	netxen_free_vlan_ip_list(adapter);
+	netxen_free_ip_list(adapter, false);
 	netxen_nic_detach(adapter);
 
 	nx_decr_dev_ref_cnt(adapter);
@@ -1814,7 +1821,6 @@ netxen_tso_check(struct net_device *netdev,
 		flags = FLAGS_VLAN_TAGGED;
 
 	} else if (vlan_tx_tag_present(skb)) {
-
 		flags = FLAGS_VLAN_OOB;
 		vid = vlan_tx_tag_get(skb);
 		netxen_set_tx_vlan_tci(first_desc, vid);
@@ -2309,7 +2315,10 @@ static int netxen_nic_poll(struct napi_struct *napi, int budget)
 
 	work_done = netxen_process_rcv_ring(sds_ring, budget);
 
-	if ((work_done < budget) && tx_complete) {
+	if (!tx_complete)
+		work_done = budget;
+
+	if (work_done < budget) {
 		napi_complete(&sds_ring->napi);
 		if (test_bit(__NX_DEV_UP, &adapter->state))
 			netxen_nic_enable_int(sds_ring);
@@ -2932,6 +2941,134 @@ static struct bin_attribute bin_attr_mem = {
 	.write = netxen_sysfs_write_mem,
 };
 
+static ssize_t
+netxen_sysfs_read_dimm(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
+		char *buf, loff_t offset, size_t size)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+	struct net_device *netdev = adapter->netdev;
+	struct netxen_dimm_cfg dimm;
+	u8 dw, rows, cols, banks, ranks;
+	u32 val;
+
+	if (size != sizeof(struct netxen_dimm_cfg)) {
+		netdev_err(netdev, "Invalid size\n");
+		return -1;
+	}
+
+	memset(&dimm, 0, sizeof(struct netxen_dimm_cfg));
+	val = NXRD32(adapter, NETXEN_DIMM_CAPABILITY);
+
+	/* Checks if DIMM info is valid. */
+	if (val & NETXEN_DIMM_VALID_FLAG) {
+		netdev_err(netdev, "Invalid DIMM flag\n");
+		dimm.presence = 0xff;
+		goto out;
+	}
+
+	rows = NETXEN_DIMM_NUMROWS(val);
+	cols = NETXEN_DIMM_NUMCOLS(val);
+	ranks = NETXEN_DIMM_NUMRANKS(val);
+	banks = NETXEN_DIMM_NUMBANKS(val);
+	dw = NETXEN_DIMM_DATAWIDTH(val);
+
+	dimm.presence = (val & NETXEN_DIMM_PRESENT);
+
+	/* Checks if DIMM info is present. */
+	if (!dimm.presence) {
+		netdev_err(netdev, "DIMM not present\n");
+		goto out;
+	}
+
+	dimm.dimm_type = NETXEN_DIMM_TYPE(val);
+
+	switch (dimm.dimm_type) {
+	case NETXEN_DIMM_TYPE_RDIMM:
+	case NETXEN_DIMM_TYPE_UDIMM:
+	case NETXEN_DIMM_TYPE_SO_DIMM:
+	case NETXEN_DIMM_TYPE_Micro_DIMM:
+	case NETXEN_DIMM_TYPE_Mini_RDIMM:
+	case NETXEN_DIMM_TYPE_Mini_UDIMM:
+		break;
+	default:
+		netdev_err(netdev, "Invalid DIMM type %x\n", dimm.dimm_type);
+		goto out;
+	}
+
+	if (val & NETXEN_DIMM_MEMTYPE_DDR2_SDRAM)
+		dimm.mem_type = NETXEN_DIMM_MEM_DDR2_SDRAM;
+	else
+		dimm.mem_type = NETXEN_DIMM_MEMTYPE(val);
+
+	if (val & NETXEN_DIMM_SIZE) {
+		dimm.size = NETXEN_DIMM_STD_MEM_SIZE;
+		goto out;
+	}
+
+	if (!rows) {
+		netdev_err(netdev, "Invalid no of rows %x\n", rows);
+		goto out;
+	}
+
+	if (!cols) {
+		netdev_err(netdev, "Invalid no of columns %x\n", cols);
+		goto out;
+	}
+
+	if (!banks) {
+		netdev_err(netdev, "Invalid no of banks %x\n", banks);
+		goto out;
+	}
+
+	ranks += 1;
+
+	switch (dw) {
+	case 0x0:
+		dw = 32;
+		break;
+	case 0x1:
+		dw = 33;
+		break;
+	case 0x2:
+		dw = 36;
+		break;
+	case 0x3:
+		dw = 64;
+		break;
+	case 0x4:
+		dw = 72;
+		break;
+	case 0x5:
+		dw = 80;
+		break;
+	case 0x6:
+		dw = 128;
+		break;
+	case 0x7:
+		dw = 144;
+		break;
+	default:
+		netdev_err(netdev, "Invalid data-width %x\n", dw);
+		goto out;
+	}
+
+	dimm.size = ((1 << rows) * (1 << cols) * dw * banks * ranks) / 8;
+	/* Size returned in MB. */
+	dimm.size = (dimm.size) / 0x100000;
+out:
+	memcpy(buf, &dimm, sizeof(struct netxen_dimm_cfg));
+	return sizeof(struct netxen_dimm_cfg);
+
+}
+
+static struct bin_attribute bin_attr_dimm = {
+	.attr = { .name = "dimm", .mode = (S_IRUGO | S_IWUSR) },
+	.size = 0,
+	.read = netxen_sysfs_read_dimm,
+};
+
 
 static void
 netxen_create_sysfs_entries(struct netxen_adapter *adapter)
@@ -2969,6 +3106,8 @@ netxen_create_diag_entries(struct netxen_adapter *adapter)
 		dev_info(dev, "failed to create crb sysfs entry\n");
 	if (device_create_bin_file(dev, &bin_attr_mem))
 		dev_info(dev, "failed to create mem sysfs entry\n");
+	if (device_create_bin_file(dev, &bin_attr_dimm))
+		dev_info(dev, "failed to create dimm sysfs entry\n");
 }
 
 
@@ -2981,6 +3120,7 @@ netxen_remove_diag_entries(struct netxen_adapter *adapter)
 	device_remove_file(dev, &dev_attr_diag_mode);
 	device_remove_bin_file(dev, &bin_attr_crb);
 	device_remove_bin_file(dev, &bin_attr_mem);
+	device_remove_bin_file(dev, &bin_attr_dimm);
 }
 
 #ifdef CONFIG_INET
@@ -3000,65 +3140,77 @@ netxen_destip_supported(struct netxen_adapter *adapter)
 }
 
 static void
-netxen_free_vlan_ip_list(struct netxen_adapter *adapter)
+netxen_free_ip_list(struct netxen_adapter *adapter, bool master)
 {
-	struct nx_vlan_ip_list  *cur;
-	struct list_head *head = &adapter->vlan_ip_list;
+	struct nx_ip_list  *cur, *tmp_cur;
 
-	while (!list_empty(head)) {
-		cur = list_entry(head->next, struct nx_vlan_ip_list, list);
-		netxen_config_ipaddr(adapter, cur->ip_addr, NX_IP_DOWN);
-		list_del(&cur->list);
-		kfree(cur);
+	list_for_each_entry_safe(cur, tmp_cur, &adapter->ip_list, list) {
+		if (master) {
+			if (cur->master) {
+				netxen_config_ipaddr(adapter, cur->ip_addr,
+						     NX_IP_DOWN);
+				list_del(&cur->list);
+				kfree(cur);
+			}
+		} else {
+			netxen_config_ipaddr(adapter, cur->ip_addr, NX_IP_DOWN);
+			list_del(&cur->list);
+			kfree(cur);
+		}
 	}
-
 }
-static void
-netxen_list_config_vlan_ip(struct netxen_adapter *adapter,
+
+static bool
+netxen_list_config_ip(struct netxen_adapter *adapter,
 		struct in_ifaddr *ifa, unsigned long event)
 {
 	struct net_device *dev;
-	struct nx_vlan_ip_list *cur, *tmp_cur;
+	struct nx_ip_list *cur, *tmp_cur;
 	struct list_head *head;
+	bool ret = false;
 
 	dev = ifa->ifa_dev ? ifa->ifa_dev->dev : NULL;
 
 	if (dev == NULL)
-		return;
-
-	if (!is_vlan_dev(dev))
-		return;
+		goto out;
 
 	switch (event) {
 	case NX_IP_UP:
-		list_for_each(head, &adapter->vlan_ip_list) {
-			cur = list_entry(head, struct nx_vlan_ip_list, list);
+		list_for_each(head, &adapter->ip_list) {
+			cur = list_entry(head, struct nx_ip_list, list);
 
 			if (cur->ip_addr == ifa->ifa_address)
-				return;
+				goto out;
 		}
 
-		cur = kzalloc(sizeof(struct nx_vlan_ip_list), GFP_ATOMIC);
-		if (cur == NULL) {
-			printk(KERN_ERR "%s: failed to add vlan ip to list\n",
-					adapter->netdev->name);
-			return;
-		}
-
+		cur = kzalloc(sizeof(struct nx_ip_list), GFP_ATOMIC);
+		if (cur == NULL)
+			goto out;
+		if (dev->priv_flags & IFF_802_1Q_VLAN)
+			dev = vlan_dev_real_dev(dev);
+		cur->master = !!netif_is_bond_master(dev);
 		cur->ip_addr = ifa->ifa_address;
-		list_add_tail(&cur->list, &adapter->vlan_ip_list);
+		list_add_tail(&cur->list, &adapter->ip_list);
+		netxen_config_ipaddr(adapter, ifa->ifa_address, NX_IP_UP);
+		ret = true;
 		break;
 	case NX_IP_DOWN:
 		list_for_each_entry_safe(cur, tmp_cur,
-					&adapter->vlan_ip_list, list) {
+					&adapter->ip_list, list) {
 			if (cur->ip_addr == ifa->ifa_address) {
 				list_del(&cur->list);
 				kfree(cur);
+				netxen_config_ipaddr(adapter, ifa->ifa_address,
+						     NX_IP_DOWN);
+				ret = true;
 				break;
 			}
 		}
 	}
+out:
+	return ret;
 }
+
 static void
 netxen_config_indev_addr(struct netxen_adapter *adapter,
 		struct net_device *dev, unsigned long event)
@@ -3075,14 +3227,10 @@ netxen_config_indev_addr(struct netxen_adapter *adapter,
 	for_ifa(indev) {
 		switch (event) {
 		case NETDEV_UP:
-			netxen_config_ipaddr(adapter,
-					ifa->ifa_address, NX_IP_UP);
-			netxen_list_config_vlan_ip(adapter, ifa, NX_IP_UP);
+			netxen_list_config_ip(adapter, ifa, NX_IP_UP);
 			break;
 		case NETDEV_DOWN:
-			netxen_config_ipaddr(adapter,
-					ifa->ifa_address, NX_IP_DOWN);
-			netxen_list_config_vlan_ip(adapter, ifa, NX_IP_DOWN);
+			netxen_list_config_ip(adapter, ifa, NX_IP_DOWN);
 			break;
 		default:
 			break;
@@ -3097,15 +3245,69 @@ netxen_restore_indev_addr(struct net_device *netdev, unsigned long event)
 
 {
 	struct netxen_adapter *adapter = netdev_priv(netdev);
-	struct nx_vlan_ip_list *pos, *tmp_pos;
+	struct nx_ip_list *pos, *tmp_pos;
 	unsigned long ip_event;
 
 	ip_event = (event == NETDEV_UP) ? NX_IP_UP : NX_IP_DOWN;
 	netxen_config_indev_addr(adapter, netdev, event);
 
-	list_for_each_entry_safe(pos, tmp_pos, &adapter->vlan_ip_list, list) {
+	list_for_each_entry_safe(pos, tmp_pos, &adapter->ip_list, list) {
 		netxen_config_ipaddr(adapter, pos->ip_addr, ip_event);
 	}
+}
+
+static inline bool
+netxen_config_checkdev(struct net_device *dev)
+{
+	struct netxen_adapter *adapter;
+
+	if (!is_netxen_netdev(dev))
+		return false;
+	adapter = netdev_priv(dev);
+	if (!adapter)
+		return false;
+	if (!netxen_destip_supported(adapter))
+		return false;
+	if (adapter->is_up != NETXEN_ADAPTER_UP_MAGIC)
+		return false;
+
+	return true;
+}
+
+/**
+ * netxen_config_master - configure addresses based on master
+ * @dev: netxen device
+ * @event: netdev event
+ */
+static void netxen_config_master(struct net_device *dev, unsigned long event)
+{
+	struct net_device *master, *slave;
+	struct netxen_adapter *adapter = netdev_priv(dev);
+
+	rcu_read_lock();
+	master = netdev_master_upper_dev_get_rcu(dev);
+	/*
+	 * This is the case where the netxen nic is being
+	 * enslaved and is dev_open()ed in bond_enslave()
+	 * Now we should program the bond's (and its vlans')
+	 * addresses in the netxen NIC.
+	 */
+	if (master && netif_is_bond_master(master) &&
+	    !netif_is_bond_slave(dev)) {
+		netxen_config_indev_addr(adapter, master, event);
+		for_each_netdev_rcu(&init_net, slave)
+			if (slave->priv_flags & IFF_802_1Q_VLAN &&
+			    vlan_dev_real_dev(slave) == master)
+				netxen_config_indev_addr(adapter, slave, event);
+	}
+	rcu_read_unlock();
+	/*
+	 * This is the case where the netxen nic is being
+	 * released and is dev_close()ed in bond_release()
+	 * just before IFF_BONDING is stripped.
+	 */
+	if (!master && dev->priv_flags & IFF_BONDING)
+		netxen_free_ip_list(adapter, true);
 }
 
 static int netxen_netdev_event(struct notifier_block *this,
@@ -3114,6 +3316,7 @@ static int netxen_netdev_event(struct notifier_block *this,
 	struct netxen_adapter *adapter;
 	struct net_device *dev = (struct net_device *)ptr;
 	struct net_device *orig_dev = dev;
+	struct net_device *slave;
 
 recheck:
 	if (dev == NULL)
@@ -3123,19 +3326,28 @@ recheck:
 		dev = vlan_dev_real_dev(dev);
 		goto recheck;
 	}
-
-	if (!is_netxen_netdev(dev))
-		goto done;
-
-	adapter = netdev_priv(dev);
-
-	if (!adapter)
-		goto done;
-
-	if (adapter->is_up != NETXEN_ADAPTER_UP_MAGIC)
-		goto done;
-
-	netxen_config_indev_addr(adapter, orig_dev, event);
+	if (event == NETDEV_UP || event == NETDEV_DOWN) {
+		/* If this is a bonding device, look for netxen-based slaves*/
+		if (netif_is_bond_master(dev)) {
+			rcu_read_lock();
+			for_each_netdev_in_bond_rcu(dev, slave) {
+				if (!netxen_config_checkdev(slave))
+					continue;
+				adapter = netdev_priv(slave);
+				netxen_config_indev_addr(adapter,
+							 orig_dev, event);
+			}
+			rcu_read_unlock();
+		} else {
+			if (!netxen_config_checkdev(dev))
+				goto done;
+			adapter = netdev_priv(dev);
+			/* Act only if the actual netxen is the target */
+			if (orig_dev == dev)
+				netxen_config_master(dev, event);
+			netxen_config_indev_addr(adapter, orig_dev, event);
+		}
+	}
 done:
 	return NOTIFY_DONE;
 }
@@ -3145,12 +3357,12 @@ netxen_inetaddr_event(struct notifier_block *this,
 		unsigned long event, void *ptr)
 {
 	struct netxen_adapter *adapter;
-	struct net_device *dev;
-
+	struct net_device *dev, *slave;
 	struct in_ifaddr *ifa = (struct in_ifaddr *)ptr;
+	unsigned long ip_event;
 
 	dev = ifa->ifa_dev ? ifa->ifa_dev->dev : NULL;
-
+	ip_event = (event == NETDEV_UP) ? NX_IP_UP : NX_IP_DOWN;
 recheck:
 	if (dev == NULL)
 		goto done;
@@ -3159,31 +3371,24 @@ recheck:
 		dev = vlan_dev_real_dev(dev);
 		goto recheck;
 	}
-
-	if (!is_netxen_netdev(dev))
-		goto done;
-
-	adapter = netdev_priv(dev);
-
-	if (!adapter || !netxen_destip_supported(adapter))
-		goto done;
-
-	if (adapter->is_up != NETXEN_ADAPTER_UP_MAGIC)
-		goto done;
-
-	switch (event) {
-	case NETDEV_UP:
-		netxen_config_ipaddr(adapter, ifa->ifa_address, NX_IP_UP);
-		netxen_list_config_vlan_ip(adapter, ifa, NX_IP_UP);
-		break;
-	case NETDEV_DOWN:
-		netxen_config_ipaddr(adapter, ifa->ifa_address, NX_IP_DOWN);
-		netxen_list_config_vlan_ip(adapter, ifa, NX_IP_DOWN);
-		break;
-	default:
-		break;
+	if (event == NETDEV_UP || event == NETDEV_DOWN) {
+		/* If this is a bonding device, look for netxen-based slaves*/
+		if (netif_is_bond_master(dev)) {
+			rcu_read_lock();
+			for_each_netdev_in_bond_rcu(dev, slave) {
+				if (!netxen_config_checkdev(slave))
+					continue;
+				adapter = netdev_priv(slave);
+				netxen_list_config_ip(adapter, ifa, ip_event);
+			}
+			rcu_read_unlock();
+		} else {
+			if (!netxen_config_checkdev(dev))
+				goto done;
+			adapter = netdev_priv(dev);
+			netxen_list_config_ip(adapter, ifa, ip_event);
+		}
 	}
-
 done:
 	return NOTIFY_DONE;
 }
@@ -3200,11 +3405,11 @@ static void
 netxen_restore_indev_addr(struct net_device *dev, unsigned long event)
 { }
 static void
-netxen_free_vlan_ip_list(struct netxen_adapter *adapter)
+netxen_free_ip_list(struct netxen_adapter *adapter, bool master)
 { }
 #endif
 
-static struct pci_error_handlers netxen_err_handler = {
+static const struct pci_error_handlers netxen_err_handler = {
 	.error_detected = netxen_io_error_detected,
 	.slot_reset = netxen_io_slot_reset,
 	.resume = netxen_io_resume,
@@ -3214,7 +3419,7 @@ static struct pci_driver netxen_driver = {
 	.name = netxen_nic_driver_name,
 	.id_table = netxen_pci_tbl,
 	.probe = netxen_nic_probe,
-	.remove = __devexit_p(netxen_nic_remove),
+	.remove = netxen_nic_remove,
 #ifdef CONFIG_PM
 	.suspend = netxen_nic_suspend,
 	.resume = netxen_nic_resume,

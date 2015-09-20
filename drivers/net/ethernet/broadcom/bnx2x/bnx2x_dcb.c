@@ -1,6 +1,6 @@
 /* bnx2x_dcb.c: Broadcom Everest network driver.
  *
- * Copyright 2009-2012 Broadcom Corporation
+ * Copyright 2009-2013 Broadcom Corporation
  *
  * Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -91,25 +91,21 @@ static void bnx2x_pfc_set(struct bnx2x *bp)
 	/*
 	 * Rx COS configuration
 	 * Changing PFC RX configuration .
-	 * In RX COS0 will always be configured to lossy and COS1 to lossless
+	 * In RX COS0 will always be configured to lossless and COS1 to lossy
 	 */
 	for (i = 0 ; i < MAX_PFC_PRIORITIES ; i++) {
 		pri_bit = 1 << i;
 
-		if (pri_bit & DCBX_PFC_PRI_PAUSE_MASK(bp))
+		if (!(pri_bit & DCBX_PFC_PRI_PAUSE_MASK(bp)))
 			val |= 1 << (i * 4);
 	}
 
 	pfc_params.pkt_priority_to_cos = val;
 
 	/* RX COS0 */
-	pfc_params.llfc_low_priority_classes = 0;
+	pfc_params.llfc_low_priority_classes = DCBX_PFC_PRI_PAUSE_MASK(bp);
 	/* RX COS1 */
-	pfc_params.llfc_high_priority_classes = DCBX_PFC_PRI_PAUSE_MASK(bp);
-
-	/* BRB configuration */
-	pfc_params.cos0_pauseable = false;
-	pfc_params.cos1_pauseable = true;
+	pfc_params.llfc_high_priority_classes = 0;
 
 	bnx2x_acquire_phy_lock(bp);
 	bp->link_params.feature_config_flags |= FEATURE_CONFIG_PFC_ENABLED;
@@ -417,8 +413,12 @@ static int bnx2x_dcbx_read_mib(struct bnx2x *bp,
 
 static void bnx2x_pfc_set_pfc(struct bnx2x *bp)
 {
+	int mfw_configured = SHMEM2_HAS(bp, drv_flags) &&
+			     GET_FLAGS(SHMEM2_RD(bp, drv_flags),
+				       1 << DRV_FLAGS_DCB_MFW_CONFIGURED);
+
 	if (bp->dcbx_port_params.pfc.enabled &&
-	    !(bp->dcbx_error & DCBX_REMOTE_MIB_ERROR))
+	    (!(bp->dcbx_error & DCBX_REMOTE_MIB_ERROR) || mfw_configured))
 		/*
 		 * 1. Fills up common PFC structures if required
 		 * 2. Configure NIG, MAC and BRB via the elink
@@ -556,10 +556,14 @@ static void bnx2x_dcbx_update_ets_config(struct bnx2x *bp)
 
 static void bnx2x_dcbx_update_ets_params(struct bnx2x *bp)
 {
+	int mfw_configured = SHMEM2_HAS(bp, drv_flags) &&
+			     GET_FLAGS(SHMEM2_RD(bp, drv_flags),
+				       1 << DRV_FLAGS_DCB_MFW_CONFIGURED);
+
 	bnx2x_ets_disabled(&bp->link_params, &bp->link_vars);
 
 	if (!bp->dcbx_port_params.ets.enabled ||
-	    (bp->dcbx_error & DCBX_REMOTE_MIB_ERROR))
+	    ((bp->dcbx_error & DCBX_REMOTE_MIB_ERROR) && !mfw_configured))
 		return;
 
 	if (CHIP_IS_E3B0(bp))
@@ -587,7 +591,7 @@ static int bnx2x_dcbx_read_shmem_remote_mib(struct bnx2x *bp)
 				 DCBX_READ_REMOTE_MIB);
 
 	if (rc) {
-		BNX2X_ERR("Faild to read remote mib from FW\n");
+		BNX2X_ERR("Failed to read remote mib from FW\n");
 		return rc;
 	}
 
@@ -615,7 +619,7 @@ static int bnx2x_dcbx_read_shmem_neg_results(struct bnx2x *bp)
 				 DCBX_READ_LOCAL_MIB);
 
 	if (rc) {
-		BNX2X_ERR("Faild to read local mib from FW\n");
+		BNX2X_ERR("Failed to read local mib from FW\n");
 		return rc;
 	}
 
@@ -972,9 +976,13 @@ void bnx2x_dcbx_init_params(struct bnx2x *bp)
 	bp->dcbx_config_params.admin_default_priority = 0;
 }
 
-void bnx2x_dcbx_init(struct bnx2x *bp)
+void bnx2x_dcbx_init(struct bnx2x *bp, bool update_shmem)
 {
 	u32 dcbx_lldp_params_offset = SHMEM_LLDP_DCBX_PARAMS_NONE;
+
+	/* only PMF can send ADMIN msg to MFW in old MFW versions */
+	if ((!bp->port.pmf) && (!(bp->flags & BC_SUPPORTS_DCBX_MSG_NON_PMF)))
+		return;
 
 	if (bp->dcbx_enabled <= 0)
 		return;
@@ -982,13 +990,12 @@ void bnx2x_dcbx_init(struct bnx2x *bp)
 	/* validate:
 	 * chip of good for dcbx version,
 	 * dcb is wanted
-	 * the function is pmf
 	 * shmem2 contains DCBX support fields
 	 */
 	DP(BNX2X_MSG_DCB, "dcb_state %d bp->port.pmf %d\n",
 	   bp->dcb_state, bp->port.pmf);
 
-	if (bp->dcb_state == BNX2X_DCB_STATE_ON && bp->port.pmf &&
+	if (bp->dcb_state == BNX2X_DCB_STATE_ON &&
 	    SHMEM2_HAS(bp, dcbx_lldp_params_offset)) {
 		dcbx_lldp_params_offset =
 			SHMEM2_RD(bp, dcbx_lldp_params_offset);
@@ -999,12 +1006,23 @@ void bnx2x_dcbx_init(struct bnx2x *bp)
 		bnx2x_update_drv_flags(bp, 1 << DRV_FLAGS_DCB_CONFIGURED, 0);
 
 		if (SHMEM_LLDP_DCBX_PARAMS_NONE != dcbx_lldp_params_offset) {
-			bnx2x_dcbx_admin_mib_updated_params(bp,
-				dcbx_lldp_params_offset);
+			/* need HW lock to avoid scenario of two drivers
+			 * writing in parallel to shmem
+			 */
+			bnx2x_acquire_hw_lock(bp,
+					      HW_LOCK_RESOURCE_DCBX_ADMIN_MIB);
+			if (update_shmem)
+				bnx2x_dcbx_admin_mib_updated_params(bp,
+					dcbx_lldp_params_offset);
 
 			/* Let HW start negotiation */
 			bnx2x_fw_command(bp,
 					 DRV_MSG_CODE_DCBX_ADMIN_PMF_MSG, 0);
+			/* release HW lock only after MFW acks that it finished
+			 * reading values from shmem
+			 */
+			bnx2x_release_hw_lock(bp,
+					      HW_LOCK_RESOURCE_DCBX_ADMIN_MIB);
 		}
 	}
 }
@@ -1792,11 +1810,14 @@ static void bnx2x_dcbx_fw_struct(struct bnx2x *bp,
 	u8 cos = 0, pri = 0;
 	struct priority_cos *tt2cos;
 	u32 *ttp = bp->dcbx_port_params.app.traffic_type_priority;
+	int mfw_configured = SHMEM2_HAS(bp, drv_flags) &&
+			     GET_FLAGS(SHMEM2_RD(bp, drv_flags),
+				       1 << DRV_FLAGS_DCB_MFW_CONFIGURED);
 
 	memset(pfc_fw_cfg, 0, sizeof(*pfc_fw_cfg));
 
 	/* to disable DCB - the structure must be zeroed */
-	if (bp->dcbx_error & DCBX_REMOTE_MIB_ERROR)
+	if ((bp->dcbx_error & DCBX_REMOTE_MIB_ERROR) && !mfw_configured)
 		return;
 
 	/*shortcut*/
@@ -1885,6 +1906,13 @@ static u8 bnx2x_dcbnl_set_state(struct net_device *netdev, u8 state)
 	struct bnx2x *bp = netdev_priv(netdev);
 	DP(BNX2X_MSG_DCB, "state = %s\n", state ? "on" : "off");
 
+	/* Fail to set state to "enabled" if dcbx is disabled in nvram */
+	if (state && ((bp->dcbx_enabled == BNX2X_DCBX_ENABLED_OFF) ||
+		      (bp->dcbx_enabled == BNX2X_DCBX_ENABLED_INVALID))) {
+		DP(BNX2X_MSG_DCB, "Can not set dcbx to enabled while it is disabled in nvm\n");
+		return 1;
+	}
+
 	bnx2x_dcbx_set_state(bp, (state ? true : false), bp->dcbx_enabled);
 	return 0;
 }
@@ -1898,10 +1926,10 @@ static void bnx2x_dcbnl_get_perm_hw_addr(struct net_device *netdev,
 	/* first the HW mac address */
 	memcpy(perm_addr, netdev->dev_addr, netdev->addr_len);
 
-#ifdef BCM_CNIC
-	/* second SAN address */
-	memcpy(perm_addr+netdev->addr_len, bp->fip_mac, netdev->addr_len);
-#endif
+	if (CNIC_LOADED(bp))
+		/* second SAN address */
+		memcpy(perm_addr+netdev->addr_len, bp->fip_mac,
+		       netdev->addr_len);
 }
 
 static void bnx2x_dcbnl_set_pg_tccfg_tx(struct net_device *netdev, int prio,
@@ -2028,10 +2056,12 @@ static void bnx2x_dcbnl_set_pfc_cfg(struct net_device *netdev, int prio,
 	if (!bnx2x_dcbnl_set_valid(bp) || prio >= MAX_PFC_PRIORITIES)
 		return;
 
-	bp->dcbx_config_params.admin_pfc_bitmap |= ((setting ? 1 : 0) << prio);
-
-	if (setting)
+	if (setting) {
+		bp->dcbx_config_params.admin_pfc_bitmap |= (1 << prio);
 		bp->dcbx_config_params.admin_pfc_tx_enable = 1;
+	} else {
+		bp->dcbx_config_params.admin_pfc_bitmap &= ~(1 << prio);
+	}
 }
 
 static void bnx2x_dcbnl_get_pfc_cfg(struct net_device *netdev, int prio,
@@ -2064,8 +2094,10 @@ static u8 bnx2x_dcbnl_set_all(struct net_device *netdev)
 		return 1;
 	}
 	if (netif_running(bp->dev)) {
-		bnx2x_nic_unload(bp, UNLOAD_NORMAL);
-		rc = bnx2x_nic_load(bp, LOAD_NORMAL);
+		bnx2x_update_drv_flags(bp,
+				       1 << DRV_FLAGS_DCB_MFW_CONFIGURED,
+				       1);
+		bnx2x_dcbx_init(bp, true);
 	}
 	DP(BNX2X_MSG_DCB, "set_dcbx_params done (%d)\n", rc);
 	if (rc)
@@ -2107,12 +2139,12 @@ static u8 bnx2x_dcbnl_get_cap(struct net_device *netdev, int capid, u8 *cap)
 			break;
 		default:
 			BNX2X_ERR("Non valid capability ID\n");
-			rval = -EINVAL;
+			rval = 1;
 			break;
 		}
 	} else {
 		DP(BNX2X_MSG_DCB, "DCB disabled\n");
-		rval = -EINVAL;
+		rval = 1;
 	}
 
 	DP(BNX2X_MSG_DCB, "capid %d:%x\n", capid, *cap);
@@ -2138,12 +2170,12 @@ static int bnx2x_dcbnl_get_numtcs(struct net_device *netdev, int tcid, u8 *num)
 			break;
 		default:
 			BNX2X_ERR("Non valid TC-ID\n");
-			rval = -EINVAL;
+			rval = 1;
 			break;
 		}
 	} else {
 		DP(BNX2X_MSG_DCB, "DCB disabled\n");
-		rval = -EINVAL;
+		rval = 1;
 	}
 
 	return rval;
@@ -2156,7 +2188,7 @@ static int bnx2x_dcbnl_set_numtcs(struct net_device *netdev, int tcid, u8 num)
 	return -EINVAL;
 }
 
-static u8  bnx2x_dcbnl_get_pfc_state(struct net_device *netdev)
+static u8 bnx2x_dcbnl_get_pfc_state(struct net_device *netdev)
 {
 	struct bnx2x *bp = netdev_priv(netdev);
 	DP(BNX2X_MSG_DCB, "state = %d\n", bp->dcbx_local_feat.pfc.enabled);
@@ -2358,12 +2390,12 @@ static u8 bnx2x_dcbnl_get_featcfg(struct net_device *netdev, int featid,
 			break;
 		default:
 			BNX2X_ERR("Non valid featrue-ID\n");
-			rval = -EINVAL;
+			rval = 1;
 			break;
 		}
 	} else {
 		DP(BNX2X_MSG_DCB, "DCB disabled\n");
-		rval = -EINVAL;
+		rval = 1;
 	}
 
 	return rval;
@@ -2399,12 +2431,12 @@ static u8 bnx2x_dcbnl_set_featcfg(struct net_device *netdev, int featid,
 			break;
 		default:
 			BNX2X_ERR("Non valid featrue-ID\n");
-			rval = -EINVAL;
+			rval = 1;
 			break;
 		}
 	} else {
 		DP(BNX2X_MSG_DCB, "dcbnl call not valid\n");
-		rval = -EINVAL;
+		rval = 1;
 	}
 
 	return rval;

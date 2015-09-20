@@ -1,14 +1,8 @@
 #ifndef _ASM_M32R_SIGNAL_H
 #define _ASM_M32R_SIGNAL_H
 
-#include <linux/types.h>
-#include <linux/time.h>
-#include <linux/compiler.h>
+#include <uapi/asm/signal.h>
 
-/* Avoid too many header ordering problems.  */
-struct siginfo;
-
-#ifdef __KERNEL__
 /* Most things should be clean enough to redefine this at will, if care
    is taken to make libc match.  */
 
@@ -22,6 +16,7 @@ typedef struct {
 	unsigned long sig[_NSIG_WORDS];
 } sigset_t;
 
+<<<<<<< HEAD
 #else
 /* Here we must cater to libcs that poke about in kernel headers.  */
 
@@ -153,14 +148,11 @@ typedef struct sigaltstack {
 } stack_t;
 
 #ifdef __KERNEL__
+=======
+#define __ARCH_HAS_SA_RESTORER
+>>>>>>> v3.10.88
 #include <asm/sigcontext.h>
 
 #undef __HAVE_ARCH_SIG_BITOPS
-
-struct pt_regs;
-
-#define ptrace_signal_deliver(regs, cookie)	do { } while (0)
-
-#endif /* __KERNEL__ */
 
 #endif  /* _ASM_M32R_SIGNAL_H */

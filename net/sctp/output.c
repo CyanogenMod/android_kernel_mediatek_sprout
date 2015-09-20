@@ -64,6 +64,8 @@
 #include <net/sctp/checksum.h>
 
 /* Forward declarations for private helpers. */
+static sctp_xmit_t __sctp_packet_append_chunk(struct sctp_packet *packet,
+					      struct sctp_chunk *chunk);
 static sctp_xmit_t sctp_packet_can_append_data(struct sctp_packet *packet,
 					   struct sctp_chunk *chunk);
 static void sctp_packet_append_data(struct sctp_packet *packet,
@@ -134,7 +136,7 @@ struct sctp_packet *sctp_packet_init(struct sctp_packet *packet,
 	packet->overhead = overhead;
 	sctp_packet_reset(packet);
 	packet->vtag = 0;
-	packet->malloced = 0;
+
 	return packet;
 }
 
@@ -149,9 +151,6 @@ void sctp_packet_free(struct sctp_packet *packet)
 		list_del_init(&chunk->list);
 		sctp_chunk_free(chunk);
 	}
-
-	if (packet->malloced)
-		kfree(packet);
 }
 
 /* This routine tries to append the chunk to the offered packet. If adding
@@ -224,7 +223,10 @@ static sctp_xmit_t sctp_packet_bundle_auth(struct sctp_packet *pkt,
 	if (!auth)
 		return retval;
 
-	retval = sctp_packet_append_chunk(pkt, auth);
+	retval = __sctp_packet_append_chunk(pkt, auth);
+
+	if (retval != SCTP_XMIT_OK)
+		sctp_chunk_free(auth);
 
 	return retval;
 }
@@ -248,50 +250,38 @@ static sctp_xmit_t sctp_packet_bundle_sack(struct sctp_packet *pkt,
 		/* If the SACK timer is running, we have a pending SACK */
 		if (timer_pending(timer)) {
 			struct sctp_chunk *sack;
+
+			if (pkt->transport->sack_generation !=
+			    pkt->transport->asoc->peer.sack_generation)
+				return retval;
+
 			asoc->a_rwnd = asoc->rwnd;
 			sack = sctp_make_sack(asoc);
 			if (sack) {
-				retval = sctp_packet_append_chunk(pkt, sack);
+				retval = __sctp_packet_append_chunk(pkt, sack);
+				if (retval != SCTP_XMIT_OK) {
+					sctp_chunk_free(sack);
+					goto out;
+				}
 				asoc->peer.sack_needed = 0;
 				if (del_timer(timer))
 					sctp_association_put(asoc);
 			}
 		}
 	}
+out:
 	return retval;
 }
+
 
 /* Append a chunk to the offered packet reporting back any inability to do
  * so.
  */
-sctp_xmit_t sctp_packet_append_chunk(struct sctp_packet *packet,
-				     struct sctp_chunk *chunk)
+static sctp_xmit_t __sctp_packet_append_chunk(struct sctp_packet *packet,
+					      struct sctp_chunk *chunk)
 {
 	sctp_xmit_t retval = SCTP_XMIT_OK;
 	__u16 chunk_len = WORD_ROUND(ntohs(chunk->chunk_hdr->length));
-
-	SCTP_DEBUG_PRINTK("%s: packet:%p chunk:%p\n", __func__, packet,
-			  chunk);
-
-	/* Data chunks are special.  Before seeing what else we can
-	 * bundle into this packet, check to see if we are allowed to
-	 * send this DATA.
-	 */
-	if (sctp_chunk_is_data(chunk)) {
-		retval = sctp_packet_can_append_data(packet, chunk);
-		if (retval != SCTP_XMIT_OK)
-			goto finish;
-	}
-
-	/* Try to bundle AUTH chunk */
-	retval = sctp_packet_bundle_auth(packet, chunk);
-	if (retval != SCTP_XMIT_OK)
-		goto finish;
-
-	/* Try to bundle SACK chunk */
-	retval = sctp_packet_bundle_sack(packet, chunk);
-	if (retval != SCTP_XMIT_OK)
-		goto finish;
 
 	/* Check to see if this chunk will fit into the packet */
 	retval = sctp_packet_will_fit(packet, chunk, chunk_len);
@@ -318,6 +308,8 @@ sctp_xmit_t sctp_packet_append_chunk(struct sctp_packet *packet,
 
 	    case SCTP_CID_SACK:
 		packet->has_sack = 1;
+		if (chunk->asoc)
+			chunk->asoc->stats.osacks++;
 		break;
 
 	    case SCTP_CID_AUTH:
@@ -334,6 +326,46 @@ finish:
 	return retval;
 }
 
+<<<<<<< HEAD
+=======
+/* Append a chunk to the offered packet reporting back any inability to do
+ * so.
+ */
+sctp_xmit_t sctp_packet_append_chunk(struct sctp_packet *packet,
+				     struct sctp_chunk *chunk)
+{
+	sctp_xmit_t retval = SCTP_XMIT_OK;
+
+	SCTP_DEBUG_PRINTK("%s: packet:%p chunk:%p\n", __func__, packet,
+			  chunk);
+
+	/* Data chunks are special.  Before seeing what else we can
+	 * bundle into this packet, check to see if we are allowed to
+	 * send this DATA.
+	 */
+	if (sctp_chunk_is_data(chunk)) {
+		retval = sctp_packet_can_append_data(packet, chunk);
+		if (retval != SCTP_XMIT_OK)
+			goto finish;
+	}
+
+	/* Try to bundle AUTH chunk */
+	retval = sctp_packet_bundle_auth(packet, chunk);
+	if (retval != SCTP_XMIT_OK)
+		goto finish;
+
+	/* Try to bundle SACK chunk */
+	retval = sctp_packet_bundle_sack(packet, chunk);
+	if (retval != SCTP_XMIT_OK)
+		goto finish;
+
+	retval = __sctp_packet_append_chunk(packet, chunk);
+
+finish:
+	return retval;
+}
+
+>>>>>>> v3.10.88
 static void sctp_packet_release_owner(struct sk_buff *skb)
 {
 	sk_free(skb->sk);
@@ -384,12 +416,12 @@ int sctp_packet_transmit(struct sctp_packet *packet)
 	sk = chunk->skb->sk;
 
 	/* Allocate the new skb.  */
-	nskb = alloc_skb(packet->size + LL_MAX_HEADER, GFP_ATOMIC);
+	nskb = alloc_skb(packet->size + MAX_HEADER, GFP_ATOMIC);
 	if (!nskb)
 		goto nomem;
 
 	/* Make sure the outbound skb has enough header room reserved. */
-	skb_reserve(nskb, packet->overhead + LL_MAX_HEADER);
+	skb_reserve(nskb, packet->overhead + MAX_HEADER);
 
 	/* Set the owning socket so that we know where to get the
 	 * destination IP address.
@@ -399,7 +431,7 @@ int sctp_packet_transmit(struct sctp_packet *packet)
 	if (!sctp_transport_dst_check(tp)) {
 		sctp_transport_route(tp, NULL, sctp_sk(sk));
 		if (asoc && (asoc->param_flags & SPP_PMTUD_ENABLE)) {
-			sctp_assoc_sync_pmtu(asoc);
+			sctp_assoc_sync_pmtu(sk, asoc);
 		}
 	}
 	dst = dst_clone(tp->dst);
@@ -518,7 +550,8 @@ int sctp_packet_transmit(struct sctp_packet *packet)
 	 * by CRC32-C as described in <draft-ietf-tsvwg-sctpcsum-02.txt>.
 	 */
 	if (!sctp_checksum_disable) {
-		if (!(dst->dev->features & NETIF_F_SCTP_CSUM)) {
+		if (!(dst->dev->features & NETIF_F_SCTP_CSUM) ||
+		    (dst_xfrm(dst) != NULL) || packet->ipfragok) {
 			__u32 crc32 = sctp_start_cksum((__u8 *)sh, cksum_buf_len);
 
 			/* 3) Put the resultant value into the checksum field in the
@@ -554,11 +587,13 @@ int sctp_packet_transmit(struct sctp_packet *packet)
 	 */
 
 	/* Dump that on IP!  */
-	if (asoc && asoc->peer.last_sent_to != tp) {
-		/* Considering the multiple CPU scenario, this is a
-		 * "correcter" place for last_sent_to.  --xguo
-		 */
-		asoc->peer.last_sent_to = tp;
+	if (asoc) {
+		asoc->stats.opackets++;
+		if (asoc->peer.last_sent_to != tp)
+			/* Considering the multiple CPU scenario, this is a
+			 * "correcter" place for last_sent_to.  --xguo
+			 */
+			asoc->peer.last_sent_to = tp;
 	}
 
 	if (has_data) {
@@ -586,7 +621,9 @@ out:
 	return err;
 no_route:
 	kfree_skb(nskb);
-	IP_INC_STATS_BH(&init_net, IPSTATS_MIB_OUTNOROUTES);
+
+	if (asoc)
+		IP_INC_STATS(sock_net(asoc->base.sk), IPSTATS_MIB_OUTNOROUTES);
 
 	/* FIXME: Returning the 'err' will effect all the associations
 	 * associated with a socket, although only one of the paths of the
@@ -680,8 +717,8 @@ static sctp_xmit_t sctp_packet_can_append_data(struct sctp_packet *packet,
 	 */
 	if (!sctp_sk(asoc->base.sk)->nodelay && sctp_packet_empty(packet) &&
 	    inflight && sctp_state(asoc, ESTABLISHED)) {
-		unsigned max = transport->pathmtu - packet->overhead;
-		unsigned len = chunk->skb->len + q->out_qlen;
+		unsigned int max = transport->pathmtu - packet->overhead;
+		unsigned int len = chunk->skb->len + q->out_qlen;
 
 		/* Check whether this chunk and all the rest of pending
 		 * data will fit or delay in hopes of bundling a full

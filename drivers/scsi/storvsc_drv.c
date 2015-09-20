@@ -33,6 +33,7 @@
 #include <linux/device.h>
 #include <linux/hyperv.h>
 #include <linux/mempool.h>
+#include <linux/blkdev.h>
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_host.h>
@@ -201,6 +202,7 @@ enum storvsc_request_type {
 #define SRB_STATUS_AUTOSENSE_VALID	0x80
 #define SRB_STATUS_INVALID_LUN	0x20
 #define SRB_STATUS_SUCCESS	0x01
+#define SRB_STATUS_ABORTED	0x02
 #define SRB_STATUS_ERROR	0x04
 
 /*
@@ -294,6 +296,25 @@ struct storvsc_scan_work {
 	struct Scsi_Host *host;
 	uint lun;
 };
+
+static void storvsc_device_scan(struct work_struct *work)
+{
+	struct storvsc_scan_work *wrk;
+	uint lun;
+	struct scsi_device *sdev;
+
+	wrk = container_of(work, struct storvsc_scan_work, work);
+	lun = wrk->lun;
+
+	sdev = scsi_device_lookup(wrk->host, 0, 0, lun);
+	if (!sdev)
+		goto done;
+	scsi_rescan_device(&sdev->sdev_gendev);
+	scsi_device_put(sdev);
+
+done:
+	kfree(wrk);
+}
 
 static void storvsc_bus_scan(struct work_struct *work)
 {
@@ -610,20 +631,21 @@ static unsigned int copy_to_bounce_buffer(struct scatterlist *orig_sgl,
 			if (bounce_sgl[j].length == PAGE_SIZE) {
 				/* full..move to next entry */
 				sg_kunmap_atomic(bounce_addr);
+				bounce_addr = 0;
 				j++;
-
-				/* if we need to use another bounce buffer */
-				if (srclen || i != orig_sgl_count - 1)
-					bounce_addr = sg_kmap_atomic(bounce_sgl,j);
-
-			} else if (srclen == 0 && i == orig_sgl_count - 1) {
-				/* unmap the last bounce that is < PAGE_SIZE */
-				sg_kunmap_atomic(bounce_addr);
 			}
+
+			/* if we need to use another bounce buffer */
+			if (srclen && bounce_addr == 0)
+				bounce_addr = sg_kmap_atomic(bounce_sgl, j);
+
 		}
 
 		sg_kunmap_atomic(src_addr - orig_sgl[i].offset);
 	}
+
+	if (bounce_addr)
+		sg_kunmap_atomic(bounce_addr);
 
 	local_irq_restore(flags);
 
@@ -761,6 +783,73 @@ cleanup:
 	return ret;
 }
 
+static void storvsc_handle_error(struct vmscsi_request *vm_srb,
+				struct scsi_cmnd *scmnd,
+				struct Scsi_Host *host,
+				u8 asc, u8 ascq)
+{
+	struct storvsc_scan_work *wrk;
+	void (*process_err_fn)(struct work_struct *work);
+	bool do_work = false;
+
+	switch (vm_srb->srb_status) {
+	case SRB_STATUS_ERROR:
+		/*
+		 * If there is an error; offline the device since all
+		 * error recovery strategies would have already been
+		 * deployed on the host side. However, if the command
+		 * were a pass-through command deal with it appropriately.
+		 */
+		switch (scmnd->cmnd[0]) {
+		case ATA_16:
+		case ATA_12:
+			set_host_byte(scmnd, DID_PASSTHROUGH);
+			break;
+		/*
+		 * On Some Windows hosts TEST_UNIT_READY command can return
+		 * SRB_STATUS_ERROR, let the upper level code deal with it
+		 * based on the sense information.
+		 */
+		case TEST_UNIT_READY:
+			break;
+		default:
+			set_host_byte(scmnd, DID_TARGET_FAILURE);
+		}
+		break;
+	case SRB_STATUS_INVALID_LUN:
+		do_work = true;
+		process_err_fn = storvsc_remove_lun;
+		break;
+	case (SRB_STATUS_ABORTED | SRB_STATUS_AUTOSENSE_VALID):
+		if ((asc == 0x2a) && (ascq == 0x9)) {
+			do_work = true;
+			process_err_fn = storvsc_device_scan;
+			/*
+			 * Retry the I/O that trigerred this.
+			 */
+			set_host_byte(scmnd, DID_REQUEUE);
+		}
+		break;
+	}
+
+	if (!do_work)
+		return;
+
+	/*
+	 * We need to schedule work to process this error; schedule it.
+	 */
+	wrk = kmalloc(sizeof(struct storvsc_scan_work), GFP_ATOMIC);
+	if (!wrk) {
+		set_host_byte(scmnd, DID_TARGET_FAILURE);
+		return;
+	}
+
+	wrk->host = host;
+	wrk->lun = vm_srb->lun;
+	INIT_WORK(&wrk->work, process_err_fn);
+	schedule_work(&wrk->work);
+}
+
 
 static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
 {
@@ -769,8 +858,13 @@ static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
 	void (*scsi_done_fn)(struct scsi_cmnd *);
 	struct scsi_sense_hdr sense_hdr;
 	struct vmscsi_request *vm_srb;
-	struct storvsc_scan_work *wrk;
 	struct stor_mem_pools *memp = scmnd->device->hostdata;
+	struct Scsi_Host *host;
+	struct storvsc_device *stor_dev;
+	struct hv_device *dev = host_dev->dev;
+
+	stor_dev = get_in_stor_device(dev);
+	host = stor_dev->host;
 
 	vm_srb = &cmd_request->vstor_packet.vm_srb;
 	if (cmd_request->bounce_sgl_count) {
@@ -783,44 +877,17 @@ static void storvsc_command_completion(struct storvsc_cmd_request *cmd_request)
 					cmd_request->bounce_sgl_count);
 	}
 
-	/*
-	 * If there is an error; offline the device since all
-	 * error recovery strategies would have already been
-	 * deployed on the host side.
-	 */
-	if (vm_srb->srb_status == SRB_STATUS_ERROR)
-		scmnd->result = DID_TARGET_FAILURE << 16;
-	else
-		scmnd->result = vm_srb->scsi_status;
-
-	/*
-	 * If the LUN is invalid; remove the device.
-	 */
-	if (vm_srb->srb_status == SRB_STATUS_INVALID_LUN) {
-		struct storvsc_device *stor_dev;
-		struct hv_device *dev = host_dev->dev;
-		struct Scsi_Host *host;
-
-		stor_dev = get_in_stor_device(dev);
-		host = stor_dev->host;
-
-		wrk = kmalloc(sizeof(struct storvsc_scan_work),
-				GFP_ATOMIC);
-		if (!wrk) {
-			scmnd->result = DID_TARGET_FAILURE << 16;
-		} else {
-			wrk->host = host;
-			wrk->lun = vm_srb->lun;
-			INIT_WORK(&wrk->work, storvsc_remove_lun);
-			schedule_work(&wrk->work);
-		}
-	}
+	scmnd->result = vm_srb->scsi_status;
 
 	if (scmnd->result) {
 		if (scsi_normalize_sense(scmnd->sense_buffer,
 				SCSI_SENSE_BUFFERSIZE, &sense_hdr))
 			scsi_print_sense_hdr("storvsc", &sense_hdr);
 	}
+
+	if (vm_srb->srb_status != SRB_STATUS_SUCCESS)
+		storvsc_handle_error(vm_srb, scmnd, host, sense_hdr.asc,
+					 sense_hdr.ascq);
 
 	scsi_set_resid(scmnd,
 		cmd_request->data_buffer.len -
@@ -1131,6 +1198,9 @@ static void storvsc_device_destroy(struct scsi_device *sdevice)
 {
 	struct stor_mem_pools *memp = sdevice->hostdata;
 
+	if (!memp)
+		return;
+
 	mempool_destroy(memp->request_mempool);
 	kmem_cache_destroy(memp->request_pool);
 	kfree(memp);
@@ -1145,6 +1215,8 @@ static int storvsc_device_configure(struct scsi_device *sdevice)
 	blk_queue_max_segment_size(sdevice->request_queue, PAGE_SIZE);
 
 	blk_queue_bounce_limit(sdevice->request_queue, BLK_BOUNCE_ANY);
+
+	sdevice->no_write_same = 1;
 
 	return 0;
 }
@@ -1222,12 +1294,24 @@ static int storvsc_host_reset_handler(struct scsi_cmnd *scmnd)
 	return SUCCESS;
 }
 
+/*
+ * The host guarantees to respond to each command, although I/O latencies might
+ * be unbounded on Azure.  Reset the timer unconditionally to give the host a
+ * chance to perform EH.
+ */
+static enum blk_eh_timer_return storvsc_eh_timed_out(struct scsi_cmnd *scmnd)
+{
+	return BLK_EH_RESET_TIMER;
+}
+
 static bool storvsc_scsi_cmd_ok(struct scsi_cmnd *scmnd)
 {
 	bool allowed = true;
 	u8 scsi_op = scmnd->cmnd[0];
 
 	switch (scsi_op) {
+	/* the host does not handle WRITE_SAME, log accident usage */
+	case WRITE_SAME:
 	/*
 	 * smartd sends this command and the host does not handle
 	 * this. So, don't send it.
@@ -1356,13 +1440,12 @@ static int storvsc_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *scmnd)
 	if (ret == -EAGAIN) {
 		/* no more space */
 
-		if (cmd_request->bounce_sgl_count) {
+		if (cmd_request->bounce_sgl_count)
 			destroy_bounce_buffer(cmd_request->bounce_sgl,
 					cmd_request->bounce_sgl_count);
 
-			ret = SCSI_MLQUEUE_DEVICE_BUSY;
-			goto queue_error;
-		}
+		ret = SCSI_MLQUEUE_DEVICE_BUSY;
+		goto queue_error;
 	}
 
 	return 0;
@@ -1379,6 +1462,7 @@ static struct scsi_host_template scsi_driver = {
 	.bios_param =		storvsc_get_chs,
 	.queuecommand =		storvsc_queuecommand,
 	.eh_host_reset_handler =	storvsc_host_reset_handler,
+	.eh_timed_out =		storvsc_eh_timed_out,
 	.slave_alloc =		storvsc_device_alloc,
 	.slave_destroy =	storvsc_device_destroy,
 	.slave_configure =	storvsc_device_configure,
@@ -1392,6 +1476,7 @@ static struct scsi_host_template scsi_driver = {
 	.use_clustering =	DISABLE_CLUSTERING,
 	/* Make sure we dont get a sg segment crosses a page boundary */
 	.dma_boundary =		PAGE_SIZE-1,
+	.no_write_same =	1,
 };
 
 enum {
@@ -1401,13 +1486,13 @@ enum {
 
 static const struct hv_vmbus_device_id id_table[] = {
 	/* SCSI guid */
-	{ VMBUS_DEVICE(0xd9, 0x63, 0x61, 0xba, 0xa1, 0x04, 0x29, 0x4d,
-		       0xb6, 0x05, 0x72, 0xe2, 0xff, 0xb1, 0xdc, 0x7f)
-	  .driver_data = SCSI_GUID },
+	{ HV_SCSI_GUID,
+	  .driver_data = SCSI_GUID
+	},
 	/* IDE guid */
-	{ VMBUS_DEVICE(0x32, 0x26, 0x41, 0x32, 0xcb, 0x86, 0xa2, 0x44,
-		       0x9b, 0x5c, 0x50, 0xd1, 0x41, 0x73, 0x54, 0xf5)
-	  .driver_data = IDE_GUID },
+	{ HV_IDE_GUID,
+	  .driver_data = IDE_GUID
+	},
 	{ },
 };
 

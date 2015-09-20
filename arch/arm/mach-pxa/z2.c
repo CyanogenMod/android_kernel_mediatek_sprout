@@ -37,9 +37,9 @@
 #include <mach/pxa27x.h>
 #include <mach/mfp-pxa27x.h>
 #include <mach/z2.h>
-#include <mach/pxafb.h>
-#include <mach/mmc.h>
-#include <plat/pxa27x_keypad.h>
+#include <linux/platform_data/video-pxafb.h>
+#include <linux/platform_data/mmc-pxamci.h>
+#include <linux/platform_data/keypad-pxa27x.h>
 #include <mach/pm.h>
 
 #include "generic.h"
@@ -615,9 +615,7 @@ static inline void z2_spi_init(void) {}
 #if defined(CONFIG_REGULATOR_TPS65023) || \
 	defined(CONFIG_REGULATOR_TPS65023_MODULE)
 static struct regulator_consumer_supply z2_tps65021_consumers[] = {
-	{
-		.supply	= "vcc_core",
-	}
+	REGULATOR_SUPPLY("vcc_core", NULL),
 };
 
 static struct regulator_init_data z2_tps65021_info[] = {
@@ -724,7 +722,7 @@ MACHINE_START(ZIPIT2, "Zipit Z2")
 	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa27x_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= z2_init,
 	.restart	= pxa_restart,
 MACHINE_END

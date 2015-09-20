@@ -476,8 +476,7 @@ static struct bin_attribute ds1511_nvram_attr = {
 	.write = ds1511_nvram_write,
 };
 
- static int __devinit
-ds1511_rtc_probe(struct platform_device *pdev)
+static int ds1511_rtc_probe(struct platform_device *pdev)
 {
 	struct rtc_device *rtc;
 	struct resource *res;
@@ -539,25 +538,22 @@ ds1511_rtc_probe(struct platform_device *pdev)
 		}
 	}
 
-	rtc = rtc_device_register(pdev->name, &pdev->dev, &ds1511_rtc_ops,
-		THIS_MODULE);
+	rtc = devm_rtc_device_register(&pdev->dev, pdev->name, &ds1511_rtc_ops,
+					THIS_MODULE);
 	if (IS_ERR(rtc))
 		return PTR_ERR(rtc);
 	pdata->rtc = rtc;
 
 	ret = sysfs_create_bin_file(&pdev->dev.kobj, &ds1511_nvram_attr);
-	if (ret)
-		rtc_device_unregister(pdata->rtc);
+
 	return ret;
 }
 
- static int __devexit
-ds1511_rtc_remove(struct platform_device *pdev)
+static int ds1511_rtc_remove(struct platform_device *pdev)
 {
 	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
 	sysfs_remove_bin_file(&pdev->dev.kobj, &ds1511_nvram_attr);
-	rtc_device_unregister(pdata->rtc);
 	if (pdata->irq > 0) {
 		/*
 		 * disable the alarm interrupt
@@ -573,7 +569,7 @@ MODULE_ALIAS("platform:ds1511");
 
 static struct platform_driver ds1511_rtc_driver = {
 	.probe		= ds1511_rtc_probe,
-	.remove		= __devexit_p(ds1511_rtc_remove),
+	.remove		= ds1511_rtc_remove,
 	.driver		= {
 		.name	= "ds1511",
 		.owner	= THIS_MODULE,

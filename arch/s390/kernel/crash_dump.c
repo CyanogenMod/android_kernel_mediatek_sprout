@@ -13,8 +13,9 @@
 #include <linux/slab.h>
 #include <linux/bootmem.h>
 #include <linux/elf.h>
-#include <asm/ipl.h>
 #include <asm/os_info.h>
+#include <asm/elf.h>
+#include <asm/ipl.h>
 
 #define PTR_ADD(x, y) (((char *) (x)) + ((unsigned long) (y)))
 #define PTR_SUB(x, y) (((char *) (x)) - ((unsigned long) (y)))
@@ -87,8 +88,8 @@ static struct mem_chunk *get_memory_layout(void)
 	struct mem_chunk *chunk_array;
 
 	chunk_array = kzalloc_panic(MEMORY_CHUNKS * sizeof(struct mem_chunk));
-	detect_memory_layout(chunk_array);
-	create_mem_hole(chunk_array, OLDMEM_BASE, OLDMEM_SIZE, CHUNK_CRASHK);
+	detect_memory_layout(chunk_array, 0);
+	create_mem_hole(chunk_array, OLDMEM_BASE, OLDMEM_SIZE);
 	return chunk_array;
 }
 
@@ -343,7 +344,7 @@ static int loads_init(Elf64_Phdr *phdr, u64 loads_offset)
 	for (i = 0; i < MEMORY_CHUNKS; i++) {
 		mem_chunk = &chunk_array[i];
 		if (mem_chunk->size == 0)
-			break;
+			continue;
 		if (chunk_array[i].type != CHUNK_READ_WRITE &&
 		    chunk_array[i].type != CHUNK_READ_ONLY)
 			continue;

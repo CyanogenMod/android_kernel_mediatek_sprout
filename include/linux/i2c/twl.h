@@ -39,52 +39,55 @@
  * address each module uses within a given i2c slave.
  */
 
-/* Slave 0 (i2c address 0x48) */
-#define TWL4030_MODULE_USB		0x00
+/* Module IDs for similar functionalities found in twl4030/twl6030 */
+enum twl_module_ids {
+	TWL_MODULE_USB,
+	TWL_MODULE_PIH,
+	TWL_MODULE_MAIN_CHARGE,
+	TWL_MODULE_PM_MASTER,
+	TWL_MODULE_PM_RECEIVER,
 
-/* Slave 1 (i2c address 0x49) */
-#define TWL4030_MODULE_AUDIO_VOICE	0x01
-#define TWL4030_MODULE_GPIO		0x02
-#define TWL4030_MODULE_INTBR		0x03
-#define TWL4030_MODULE_PIH		0x04
-#define TWL4030_MODULE_TEST		0x05
+	TWL_MODULE_RTC,
+	TWL_MODULE_PWM,
+	TWL_MODULE_LED,
+	TWL_MODULE_SECURED_REG,
 
-/* Slave 2 (i2c address 0x4a) */
-#define TWL4030_MODULE_KEYPAD		0x06
-#define TWL4030_MODULE_MADC		0x07
-#define TWL4030_MODULE_INTERRUPTS	0x08
-#define TWL4030_MODULE_LED		0x09
-#define TWL4030_MODULE_MAIN_CHARGE	0x0A
-#define TWL4030_MODULE_PRECHARGE	0x0B
-#define TWL4030_MODULE_PWM0		0x0C
-#define TWL4030_MODULE_PWM1		0x0D
-#define TWL4030_MODULE_PWMA		0x0E
-#define TWL4030_MODULE_PWMB		0x0F
+	TWL_MODULE_LAST,
+};
 
-#define TWL5031_MODULE_ACCESSORY	0x10
-#define TWL5031_MODULE_INTERRUPTS	0x11
+/* Modules only available in twl4030 series */
+enum twl4030_module_ids {
+	TWL4030_MODULE_AUDIO_VOICE = TWL_MODULE_LAST,
+	TWL4030_MODULE_GPIO,
+	TWL4030_MODULE_INTBR,
+	TWL4030_MODULE_TEST,
+	TWL4030_MODULE_KEYPAD,
 
-/* Slave 3 (i2c address 0x4b) */
-#define TWL4030_MODULE_BACKUP		0x12
-#define TWL4030_MODULE_INT		0x13
-#define TWL4030_MODULE_PM_MASTER	0x14
-#define TWL4030_MODULE_PM_RECEIVER	0x15
-#define TWL4030_MODULE_RTC		0x16
-#define TWL4030_MODULE_SECURED_REG	0x17
+	TWL4030_MODULE_MADC,
+	TWL4030_MODULE_INTERRUPTS,
+	TWL4030_MODULE_PRECHARGE,
+	TWL4030_MODULE_BACKUP,
+	TWL4030_MODULE_INT,
 
-#define TWL_MODULE_USB		TWL4030_MODULE_USB
-#define TWL_MODULE_AUDIO_VOICE	TWL4030_MODULE_AUDIO_VOICE
-#define TWL_MODULE_PIH		TWL4030_MODULE_PIH
-#define TWL_MODULE_MADC		TWL4030_MODULE_MADC
-#define TWL_MODULE_MAIN_CHARGE	TWL4030_MODULE_MAIN_CHARGE
-#define TWL_MODULE_PM_MASTER	TWL4030_MODULE_PM_MASTER
-#define TWL_MODULE_PM_RECEIVER	TWL4030_MODULE_PM_RECEIVER
-#define TWL_MODULE_RTC		TWL4030_MODULE_RTC
-#define TWL_MODULE_PWM		TWL4030_MODULE_PWM0
+	TWL5031_MODULE_ACCESSORY,
+	TWL5031_MODULE_INTERRUPTS,
 
-#define TWL6030_MODULE_ID0	0x0D
-#define TWL6030_MODULE_ID1	0x0E
-#define TWL6030_MODULE_ID2	0x0F
+	TWL4030_MODULE_LAST,
+};
+
+/* Modules only available in twl6030 series */
+enum twl6030_module_ids {
+	TWL6030_MODULE_ID0 = TWL_MODULE_LAST,
+	TWL6030_MODULE_ID1,
+	TWL6030_MODULE_ID2,
+	TWL6030_MODULE_GPADC,
+	TWL6030_MODULE_GASGAUGE,
+
+	TWL6030_MODULE_LAST,
+};
+
+/* Until the clients has been converted to use TWL_MODULE_LED */
+#define TWL4030_MODULE_LED	TWL_MODULE_LED
 
 #define GPIO_INTR_OFFSET	0
 #define KEYPAD_INTR_OFFSET	1
@@ -171,25 +174,26 @@ static inline int twl_class_is_ ##class(void)	\
 TWL_CLASS_IS(4030, TWL4030_CLASS_ID)
 TWL_CLASS_IS(6030, TWL6030_CLASS_ID)
 
-#define TWL6025_SUBCLASS	BIT(4)  /* TWL6025 has changed registers */
-
-/*
- * Read and write single 8-bit registers
- */
-int twl_i2c_write_u8(u8 mod_no, u8 val, u8 reg);
-int twl_i2c_read_u8(u8 mod_no, u8 *val, u8 reg);
-
 /*
  * Read and write several 8-bit registers at once.
- *
- * IMPORTANT:  For twl_i2c_write(), allocate num_bytes + 1
- * for the value, and populate your data starting at offset 1.
  */
 int twl_i2c_write(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 int twl_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 
+/*
+ * Read and write single 8-bit registers
+ */
+static inline int twl_i2c_write_u8(u8 mod_no, u8 val, u8 reg) {
+	return twl_i2c_write(mod_no, &val, reg, 1);
+}
+
+static inline int twl_i2c_read_u8(u8 mod_no, u8 *val, u8 reg) {
+	return twl_i2c_read(mod_no, val, reg, 1);
+}
+
 int twl_get_type(void);
 int twl_get_version(void);
+int twl_get_hfclk_rate(void);
 
 int twl6030_interrupt_unmask(u8 bit_mask, u8 offset);
 int twl6030_interrupt_mask(u8 bit_mask, u8 offset);
@@ -557,13 +561,12 @@ struct twl4030_clock_init_data {
 struct twl4030_bci_platform_data {
 	int *battery_tmp_tbl;
 	unsigned int tblsize;
+	int	bb_uvolt;	/* voltage to charge backup battery */
+	int	bb_uamp;	/* current for backup battery charging */
 };
 
 /* TWL4030_GPIO_MAX (18) GPIOs, with interrupts */
 struct twl4030_gpio_platform_data {
-	int		gpio_base;
-	unsigned	irq_base, irq_end;
-
 	/* package the two LED signals as output-only GPIOs? */
 	bool		use_leds;
 
@@ -666,7 +669,7 @@ struct twl4030_codec_data {
 	unsigned int check_defaults:1;
 	unsigned int reset_registers:1;
 	unsigned int hs_extmute:1;
-	void (*set_hs_extmute)(int mute);
+	int hs_extmute_gpio;
 };
 
 struct twl4030_vibra_data {
@@ -685,7 +688,6 @@ struct twl4030_audio_data {
 };
 
 struct twl4030_platform_data {
-	unsigned				irq_base, irq_end;
 	struct twl4030_clock_init_data		*clock;
 	struct twl4030_bci_platform_data	*bci;
 	struct twl4030_gpio_platform_data	*gpio;
@@ -746,6 +748,17 @@ struct twl_regulator_driver_data {
 	void		*data;
 	unsigned long	features;
 };
+/* chip-specific feature flags, for twl_regulator_driver_data.features */
+#define TWL4030_VAUX2		BIT(0)	/* pre-5030 voltage ranges */
+#define TPS_SUBSET		BIT(1)	/* tps659[23]0 have fewer LDOs */
+#define TWL5031			BIT(2)  /* twl5031 has different registers */
+#define TWL6030_CLASS		BIT(3)	/* TWL6030 class */
+#define TWL6025_SUBCLASS	BIT(4)  /* TWL6025 has changed registers */
+#define TWL4030_ALLOW_UNSUPPORTED BIT(5) /* Some voltages are possible
+					  * but not officially supported.
+					  * This flag is necessary to
+					  * enable them.
+					  */
 
 /*----------------------------------------------------------------------*/
 

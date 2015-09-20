@@ -38,7 +38,7 @@
 #include <unistd.h>
 #include <tools/le_byteshift.h>
 
-#include "../../include/linux/usb/functionfs.h"
+#include "../../include/uapi/linux/usb/functionfs.h"
 
 
 /******************** Little Endian Handling ********************************/
@@ -116,8 +116,8 @@ static const struct {
 	.header = {
 		.magic = cpu_to_le32(FUNCTIONFS_DESCRIPTORS_MAGIC),
 		.length = cpu_to_le32(sizeof descriptors),
-		.fs_count = 3,
-		.hs_count = 3,
+		.fs_count = cpu_to_le32(3),
+		.hs_count = cpu_to_le32(3),
 	},
 	.fs_descs = {
 		.intf = {

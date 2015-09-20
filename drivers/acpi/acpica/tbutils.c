@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -147,7 +147,7 @@ acpi_status acpi_tb_initialize_facs(void)
 					 ACPI_CAST_INDIRECT_PTR(struct
 								acpi_table_header,
 								&acpi_gbl_FACS));
-	return status;
+	return (status);
 }
 #endif				/* !ACPI_REDUCED_HARDWARE */
 
@@ -178,8 +178,8 @@ u8 acpi_tb_tables_loaded(void)
  *
  * FUNCTION:    acpi_tb_fix_string
  *
- * PARAMETERS:  String              - String to be repaired
- *              Length              - Maximum length
+ * PARAMETERS:  string              - String to be repaired
+ *              length              - Maximum length
  *
  * RETURN:      None
  *
@@ -205,7 +205,7 @@ static void acpi_tb_fix_string(char *string, acpi_size length)
  * FUNCTION:    acpi_tb_cleanup_table_header
  *
  * PARAMETERS:  out_header          - Where the cleaned header is returned
- *              Header              - Input ACPI table header
+ *              header              - Input ACPI table header
  *
  * RETURN:      Returns the cleaned header in out_header
  *
@@ -231,8 +231,8 @@ acpi_tb_cleanup_table_header(struct acpi_table_header *out_header,
  *
  * FUNCTION:    acpi_tb_print_table_header
  *
- * PARAMETERS:  Address             - Table physical address
- *              Header              - Table header
+ * PARAMETERS:  address             - Table physical address
+ *              header              - Table header
  *
  * RETURN:      None
  *
@@ -246,16 +246,12 @@ acpi_tb_print_table_header(acpi_physical_address address,
 {
 	struct acpi_table_header local_header;
 
-	/*
-	 * The reason that the Address is cast to a void pointer is so that we
-	 * can use %p which will work properly on both 32-bit and 64-bit hosts.
-	 */
 	if (ACPI_COMPARE_NAME(header->signature, ACPI_SIG_FACS)) {
 
 		/* FACS only has signature and length fields */
 
-		ACPI_INFO((AE_INFO, "%4.4s %p %05X",
-			   header->signature, ACPI_CAST_PTR(void, address),
+		ACPI_INFO((AE_INFO, "%4.4s 0x%8.8X%8.8X %05X",
+			   header->signature, ACPI_FORMAT_UINT64(address),
 			   header->length));
 	} else if (ACPI_COMPARE_NAME(header->signature, ACPI_SIG_RSDP)) {
 
@@ -266,8 +262,8 @@ acpi_tb_print_table_header(acpi_physical_address address,
 					  header)->oem_id, ACPI_OEM_ID_SIZE);
 		acpi_tb_fix_string(local_header.oem_id, ACPI_OEM_ID_SIZE);
 
-		ACPI_INFO((AE_INFO, "RSDP %p %05X (v%.2d %6.6s)",
-			   ACPI_CAST_PTR (void, address),
+		ACPI_INFO((AE_INFO, "RSDP 0x%8.8X%8.8X %05X (v%.2d %6.6s)",
+			   ACPI_FORMAT_UINT64(address),
 			   (ACPI_CAST_PTR(struct acpi_table_rsdp, header)->
 			    revision >
 			    0) ? ACPI_CAST_PTR(struct acpi_table_rsdp,
@@ -281,8 +277,8 @@ acpi_tb_print_table_header(acpi_physical_address address,
 		acpi_tb_cleanup_table_header(&local_header, header);
 
 		ACPI_INFO((AE_INFO,
-			   "%4.4s %p %05X (v%.2d %6.6s %8.8s %08X %4.4s %08X)",
-			   local_header.signature, ACPI_CAST_PTR(void, address),
+			   "%-4.4s 0x%8.8X%8.8X %05X (v%.2d %-6.6s %-8.8s %08X %-4.4s %08X)",
+			   local_header.signature, ACPI_FORMAT_UINT64(address),
 			   local_header.length, local_header.revision,
 			   local_header.oem_id, local_header.oem_table_id,
 			   local_header.oem_revision,
@@ -296,8 +292,8 @@ acpi_tb_print_table_header(acpi_physical_address address,
  *
  * FUNCTION:    acpi_tb_validate_checksum
  *
- * PARAMETERS:  Table               - ACPI table to verify
- *              Length              - Length of entire table
+ * PARAMETERS:  table               - ACPI table to verify
+ *              length              - Length of entire table
  *
  * RETURN:      Status
  *
@@ -317,10 +313,11 @@ acpi_status acpi_tb_verify_checksum(struct acpi_table_header *table, u32 length)
 	/* Checksum ok? (should be zero) */
 
 	if (checksum) {
-		ACPI_WARNING((AE_INFO,
-			      "Incorrect checksum in table [%4.4s] - 0x%2.2X, should be 0x%2.2X",
-			      table->signature, table->checksum,
-			      (u8) (table->checksum - checksum)));
+		ACPI_BIOS_WARNING((AE_INFO,
+				   "Incorrect checksum in table [%4.4s] - 0x%2.2X, "
+				   "should be 0x%2.2X",
+				   table->signature, table->checksum,
+				   (u8)(table->checksum - checksum)));
 
 #if (ACPI_CHECKSUM_ABORT)
 
@@ -335,8 +332,8 @@ acpi_status acpi_tb_verify_checksum(struct acpi_table_header *table, u32 length)
  *
  * FUNCTION:    acpi_tb_checksum
  *
- * PARAMETERS:  Buffer          - Pointer to memory region to be checked
- *              Length          - Length of this memory region
+ * PARAMETERS:  buffer          - Pointer to memory region to be checked
+ *              length          - Length of this memory region
  *
  * RETURN:      Checksum (u8)
  *
@@ -353,7 +350,7 @@ u8 acpi_tb_checksum(u8 *buffer, u32 length)
 		sum = (u8) (sum + *(buffer++));
 	}
 
-	return sum;
+	return (sum);
 }
 
 /*******************************************************************************
@@ -377,8 +374,9 @@ void acpi_tb_check_dsdt_header(void)
 
 	if (acpi_gbl_original_dsdt_header.length != acpi_gbl_DSDT->length ||
 	    acpi_gbl_original_dsdt_header.checksum != acpi_gbl_DSDT->checksum) {
-		ACPI_ERROR((AE_INFO,
-			    "The DSDT has been corrupted or replaced - old, new headers below"));
+		ACPI_BIOS_ERROR((AE_INFO,
+				 "The DSDT has been corrupted or replaced - "
+				 "old, new headers below"));
 		acpi_tb_print_table_header(0, &acpi_gbl_original_dsdt_header);
 		acpi_tb_print_table_header(0, acpi_gbl_DSDT);
 
@@ -438,8 +436,8 @@ struct acpi_table_header *acpi_tb_copy_dsdt(u32 table_index)
  *
  * FUNCTION:    acpi_tb_install_table
  *
- * PARAMETERS:  Address                 - Physical address of DSDT or FACS
- *              Signature               - Table signature, NULL if no need to
+ * PARAMETERS:  address                 - Physical address of DSDT or FACS
+ *              signature               - Table signature, NULL if no need to
  *                                        match
  *              table_index             - Index into root table array
  *
@@ -472,17 +470,18 @@ acpi_tb_install_table(acpi_physical_address address,
 	table = acpi_os_map_memory(address, sizeof(struct acpi_table_header));
 	if (!table) {
 		ACPI_ERROR((AE_INFO,
-			    "Could not map memory for table [%s] at %p",
-			    signature, ACPI_CAST_PTR(void, address)));
+			    "Could not map memory for table [%s] at %8.8X%8.8X",
+			    signature, ACPI_FORMAT_UINT64(address)));
 		return;
 	}
 
 	/* If a particular signature is expected (DSDT/FACS), it must match */
 
 	if (signature && !ACPI_COMPARE_NAME(table->signature, signature)) {
-		ACPI_ERROR((AE_INFO,
-			    "Invalid signature 0x%X for ACPI table, expected [%s]",
-			    *ACPI_CAST_PTR(u32, table->signature), signature));
+		ACPI_BIOS_ERROR((AE_INFO,
+				 "Invalid signature 0x%X for ACPI table, expected [%s]",
+				 *ACPI_CAST_PTR(u32, table->signature),
+				 signature));
 		goto unmap_and_exit;
 	}
 
@@ -589,10 +588,10 @@ acpi_tb_get_root_table_entry(u8 *table_entry, u32 table_entry_size)
 
 			/* Will truncate 64-bit address to 32 bits, issue warning */
 
-			ACPI_WARNING((AE_INFO,
-				      "64-bit Physical Address in XSDT is too large (0x%8.8X%8.8X),"
-				      " truncating",
-				      ACPI_FORMAT_UINT64(address64)));
+			ACPI_BIOS_WARNING((AE_INFO,
+					   "64-bit Physical Address in XSDT is too large (0x%8.8X%8.8X),"
+					   " truncating",
+					   ACPI_FORMAT_UINT64(address64)));
 		}
 #endif
 		return ((acpi_physical_address) (address64));
@@ -603,7 +602,7 @@ acpi_tb_get_root_table_entry(u8 *table_entry, u32 table_entry_size)
  *
  * FUNCTION:    acpi_tb_parse_root_table
  *
- * PARAMETERS:  Rsdp                    - Pointer to the RSDP
+ * PARAMETERS:  rsdp                    - Pointer to the RSDP
  *
  * RETURN:      Status
  *
@@ -694,8 +693,9 @@ acpi_tb_parse_root_table(acpi_physical_address rsdp_address)
 	acpi_os_unmap_memory(table, sizeof(struct acpi_table_header));
 
 	if (length < sizeof(struct acpi_table_header)) {
-		ACPI_ERROR((AE_INFO, "Invalid length 0x%X in RSDT/XSDT",
-			    length));
+		ACPI_BIOS_ERROR((AE_INFO,
+				 "Invalid table length 0x%X in RSDT/XSDT",
+				 length));
 		return_ACPI_STATUS(AE_INVALID_TABLE_LENGTH);
 	}
 

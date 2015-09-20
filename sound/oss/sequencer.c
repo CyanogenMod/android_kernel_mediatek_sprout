@@ -545,6 +545,9 @@ static void seq_chn_common_event(unsigned char *event_rec)
 		case MIDI_PGM_CHANGE:
 			if (seq_mode == SEQ_2)
 			{
+				if (chn > 15)
+					break;
+
 				synth_devs[dev]->chn_info[chn].pgm_num = p1;
 				if ((int) dev >= num_synths)
 					synth_devs[dev]->set_instr(dev, chn, p1);
@@ -596,6 +599,9 @@ static void seq_chn_common_event(unsigned char *event_rec)
 		case MIDI_PITCH_BEND:
 			if (seq_mode == SEQ_2)
 			{
+				if (chn > 15)
+					break;
+
 				synth_devs[dev]->chn_info[chn].bender_value = w14;
 
 				if ((int) dev < num_synths)
@@ -677,13 +683,8 @@ static int seq_timing_event(unsigned char *event_rec)
 			break;
 
 		case TMR_ECHO:
-			if (seq_mode == SEQ_2)
-				seq_copy_to_input(event_rec, 8);
-			else
-			{
-				parm = (parm << 8 | SEQ_ECHO);
-				seq_copy_to_input((unsigned char *) &parm, 4);
-			}
+			parm = (parm << 8 | SEQ_ECHO);
+			seq_copy_to_input((unsigned char *) &parm, 4);
 			break;
 
 		default:;
@@ -1326,7 +1327,6 @@ int sequencer_ioctl(int dev, struct file *file, unsigned int cmd, void __user *a
 	int mode = translate_mode(file);
 	struct synth_info inf;
 	struct seq_event_rec event_rec;
-	unsigned long flags;
 	int __user *p = arg;
 
 	orig_dev = dev = dev >> 4;
@@ -1481,9 +1481,7 @@ int sequencer_ioctl(int dev, struct file *file, unsigned int cmd, void __user *a
 		case SNDCTL_SEQ_OUTOFBAND:
 			if (copy_from_user(&event_rec, arg, sizeof(event_rec)))
 				return -EFAULT;
-			spin_lock_irqsave(&lock,flags);
 			play_event(event_rec.arr);
-			spin_unlock_irqrestore(&lock,flags);
 			return 0;
 
 		case SNDCTL_MIDI_INFO:

@@ -1,15 +1,17 @@
 /*
- *  (c) 2005, 2006 Advanced Micro Devices, Inc.
+ *  (c) 2005-2012 Advanced Micro Devices, Inc.
  *  Your use of this code is subject to the terms and conditions of the
  *  GNU general public license version 2. See "COPYING" or
  *  http://www.gnu.org/licenses/gpl.html
  *
  *  Written by Jacob Shin - AMD, Inc.
  *
- *  Support : jacob.shin@amd.com
+ *  Maintained by: Borislav Petkov <bp@alien8.de>
  *
  *  April 2006
  *     - added support for AMD Family 0x10 processors
+ *  May 2012
+ *     - major scrubbing
  *
  *  All MC4_MISCi registers are shared between multi-cores
  */
@@ -25,12 +27,12 @@
 #include <linux/cpu.h>
 #include <linux/smp.h>
 
+#include <asm/amd_nb.h>
 #include <asm/apic.h>
 #include <asm/idle.h>
 #include <asm/mce.h>
 #include <asm/msr.h>
 
-#define NR_BANKS          6
 #define NR_BLOCKS         9
 #define THRESHOLD_MAX     0xFFF
 #define INT_TYPE_APIC     0x00020000
@@ -45,6 +47,7 @@
 #define MASK_BLKPTR_LO    0xFF000000
 #define MCG_XBLK_ADDR     0xC0000400
 
+<<<<<<< HEAD
 struct threshold_block {
 	unsigned int		block;
 	unsigned int		bank;
@@ -66,8 +69,18 @@ static DEFINE_PER_CPU(struct threshold_bank * [NR_BANKS], threshold_banks);
 
 static unsigned char shared_bank[NR_BANKS] = {
 	0, 0, 0, 0, 1
+=======
+static const char * const th_names[] = {
+	"load_store",
+	"insn_fetch",
+	"combined_unit",
+	"",
+	"northbridge",
+	"execution_unit",
+>>>>>>> v3.10.88
 };
 
+static DEFINE_PER_CPU(struct threshold_bank **, threshold_banks);
 static DEFINE_PER_CPU(unsigned char, bank_map);	/* see which banks are on */
 
 static void amd_threshold_interrupt(void);
@@ -84,6 +97,35 @@ struct thresh_restart {
 	u16			old_limit;
 };
 
+<<<<<<< HEAD
+=======
+static inline bool is_shared_bank(int bank)
+{
+	/* Bank 4 is for northbridge reporting and is thus shared */
+	return (bank == 4);
+}
+
+static const char * const bank4_names(struct threshold_block *b)
+{
+	switch (b->address) {
+	/* MSR4_MISC0 */
+	case 0x00000413:
+		return "dram";
+
+	case 0xc0000408:
+		return "ht_links";
+
+	case 0xc0000409:
+		return "l3_cache";
+
+	default:
+		WARN(1, "Funny MSR: 0x%08x\n", b->address);
+		return "";
+	}
+};
+
+
+>>>>>>> v3.10.88
 static bool lvt_interrupt_supported(unsigned int bank, u32 msr_high_bits)
 {
 	/*
@@ -199,7 +241,7 @@ void mce_amd_feature_init(struct cpuinfo_x86 *c)
 	unsigned int bank, block;
 	int offset = -1;
 
-	for (bank = 0; bank < NR_BANKS; ++bank) {
+	for (bank = 0; bank < mca_cfg.banks; ++bank) {
 		for (block = 0; block < NR_BLOCKS; ++block) {
 			if (block == 0)
 				address = MSR_IA32_MC0_MISC + bank * 4;
@@ -224,8 +266,11 @@ void mce_amd_feature_init(struct cpuinfo_x86 *c)
 
 			if (!block)
 				per_cpu(bank_map, cpu) |= (1 << bank);
+<<<<<<< HEAD
 			if (shared_bank[bank] && c->cpu_core_id)
 				break;
+=======
+>>>>>>> v3.10.88
 
 			memset(&b, 0, sizeof(b));
 			b.cpu			= cpu;
@@ -263,7 +308,7 @@ static void amd_threshold_interrupt(void)
 	mce_setup(&m);
 
 	/* assume first bank caused it */
-	for (bank = 0; bank < NR_BANKS; ++bank) {
+	for (bank = 0; bank < mca_cfg.banks; ++bank) {
 		if (!(per_cpu(bank_map, m.cpu) & (1 << bank)))
 			continue;
 		for (block = 0; block < NR_BLOCKS; ++block) {
@@ -326,7 +371,7 @@ struct threshold_attr {
 #define SHOW_FIELDS(name)						\
 static ssize_t show_ ## name(struct threshold_block *b, char *buf)	\
 {									\
-	return sprintf(buf, "%lx\n", (unsigned long) b->name);		\
+	return sprintf(buf, "%lu\n", (unsigned long) b->name);		\
 }
 SHOW_FIELDS(interrupt_enable)
 SHOW_FIELDS(threshold_limit)
@@ -377,37 +422,20 @@ store_threshold_limit(struct threshold_block *b, const char *buf, size_t size)
 	return size;
 }
 
-struct threshold_block_cross_cpu {
-	struct threshold_block	*tb;
-	long			retval;
-};
-
-static void local_error_count_handler(void *_tbcc)
-{
-	struct threshold_block_cross_cpu *tbcc = _tbcc;
-	struct threshold_block *b = tbcc->tb;
-	u32 low, high;
-
-	rdmsr(b->address, low, high);
-	tbcc->retval = (high & 0xFFF) - (THRESHOLD_MAX - b->threshold_limit);
-}
-
 static ssize_t show_error_count(struct threshold_block *b, char *buf)
 {
-	struct threshold_block_cross_cpu tbcc = { .tb = b, };
+	u32 lo, hi;
 
-	smp_call_function_single(b->cpu, local_error_count_handler, &tbcc, 1);
-	return sprintf(buf, "%lx\n", tbcc.retval);
+	rdmsr_on_cpu(b->cpu, b->address, &lo, &hi);
+
+	return sprintf(buf, "%u\n", ((hi & THRESHOLD_MAX) -
+				     (THRESHOLD_MAX - b->threshold_limit)));
 }
 
-static ssize_t store_error_count(struct threshold_block *b,
-				 const char *buf, size_t count)
-{
-	struct thresh_restart tr = { .b = b, .reset = 1, .old_limit = 0 };
-
-	smp_call_function_single(b->cpu, threshold_restart_bank, &tr, 1);
-	return 1;
-}
+static struct threshold_attr error_count = {
+	.attr = {.name = __stringify(error_count), .mode = 0444 },
+	.show = show_error_count,
+};
 
 #define RW_ATTR(val)							\
 static struct threshold_attr val = {					\
@@ -418,13 +446,12 @@ static struct threshold_attr val = {					\
 
 RW_ATTR(interrupt_enable);
 RW_ATTR(threshold_limit);
-RW_ATTR(error_count);
 
 static struct attribute *default_attrs[] = {
-	&interrupt_enable.attr,
 	&threshold_limit.attr,
 	&error_count.attr,
-	NULL
+	NULL,	/* possibly interrupt_enable if supported, see below */
+	NULL,
 };
 
 #define to_block(k)	container_of(k, struct threshold_block, kobj)
@@ -472,7 +499,7 @@ static __cpuinit int allocate_threshold_blocks(unsigned int cpu,
 	u32 low, high;
 	int err;
 
-	if ((bank >= NR_BANKS) || (block >= NR_BLOCKS))
+	if ((bank >= mca_cfg.banks) || (block >= NR_BLOCKS))
 		return 0;
 
 	if (rdmsr_safe_on_cpu(cpu, address, &low, &high))
@@ -501,6 +528,11 @@ static __cpuinit int allocate_threshold_blocks(unsigned int cpu,
 	b->interrupt_capable	= lvt_interrupt_supported(bank, high);
 	b->threshold_limit	= THRESHOLD_MAX;
 
+	if (b->interrupt_capable)
+		threshold_ktype.default_attrs[2] = &interrupt_enable.attr;
+	else
+		threshold_ktype.default_attrs[2] = NULL;
+
 	INIT_LIST_HEAD(&b->miscj);
 
 	if (per_cpu(threshold_banks, cpu)[bank]->blocks) {
@@ -512,7 +544,7 @@ static __cpuinit int allocate_threshold_blocks(unsigned int cpu,
 
 	err = kobject_init_and_add(&b->kobj, &threshold_ktype,
 				   per_cpu(threshold_banks, cpu)[bank]->kobj,
-				   "misc%i", block);
+				   (bank == 4 ? bank4_names(b) : th_names[bank]));
 	if (err)
 		goto out_free;
 recurse:
@@ -543,98 +575,91 @@ out_free:
 	return err;
 }
 
-static __cpuinit long
-local_allocate_threshold_blocks(int cpu, unsigned int bank)
+static __cpuinit int __threshold_add_blocks(struct threshold_bank *b)
 {
-	return allocate_threshold_blocks(cpu, bank, 0,
-					 MSR_IA32_MC0_MISC + bank * 4);
+	struct list_head *head = &b->blocks->miscj;
+	struct threshold_block *pos = NULL;
+	struct threshold_block *tmp = NULL;
+	int err = 0;
+
+	err = kobject_add(&b->blocks->kobj, b->kobj, b->blocks->kobj.name);
+	if (err)
+		return err;
+
+	list_for_each_entry_safe(pos, tmp, head, miscj) {
+
+		err = kobject_add(&pos->kobj, b->kobj, pos->kobj.name);
+		if (err) {
+			list_for_each_entry_safe_reverse(pos, tmp, head, miscj)
+				kobject_del(&pos->kobj);
+
+			return err;
+		}
+	}
+	return err;
 }
 
-/* symlinks sibling shared banks to first core.  first core owns dir/files. */
 static __cpuinit int threshold_create_bank(unsigned int cpu, unsigned int bank)
 {
-	int i, err = 0;
-	struct threshold_bank *b = NULL;
 	struct device *dev = per_cpu(mce_device, cpu);
-	char name[32];
+	struct amd_northbridge *nb = NULL;
+	struct threshold_bank *b = NULL;
+	const char *name = th_names[bank];
+	int err = 0;
 
-	sprintf(name, "threshold_bank%i", bank);
+	if (is_shared_bank(bank)) {
+		nb = node_to_amd_nb(amd_get_nb_id(cpu));
 
-#ifdef CONFIG_SMP
-	if (cpu_data(cpu).cpu_core_id && shared_bank[bank]) {	/* symlink */
-		i = cpumask_first(cpu_llc_shared_mask(cpu));
+		/* threshold descriptor already initialized on this node? */
+		if (nb && nb->bank4) {
+			/* yes, use it */
+			b = nb->bank4;
+			err = kobject_add(b->kobj, &dev->kobj, name);
+			if (err)
+				goto out;
 
-		/* first core not up yet */
-		if (cpu_data(i).cpu_core_id)
+			per_cpu(threshold_banks, cpu)[bank] = b;
+			atomic_inc(&b->cpus);
+
+			err = __threshold_add_blocks(b);
+
 			goto out;
-
-		/* already linked */
-		if (per_cpu(threshold_banks, cpu)[bank])
-			goto out;
-
-		b = per_cpu(threshold_banks, i)[bank];
-
-		if (!b)
-			goto out;
-
-		err = sysfs_create_link(&dev->kobj, b->kobj, name);
-		if (err)
-			goto out;
-
-		cpumask_copy(b->cpus, cpu_llc_shared_mask(cpu));
-		per_cpu(threshold_banks, cpu)[bank] = b;
-
-		goto out;
+		}
 	}
-#endif
 
 	b = kzalloc(sizeof(struct threshold_bank), GFP_KERNEL);
 	if (!b) {
 		err = -ENOMEM;
 		goto out;
 	}
-	if (!zalloc_cpumask_var(&b->cpus, GFP_KERNEL)) {
-		kfree(b);
-		err = -ENOMEM;
-		goto out;
-	}
 
 	b->kobj = kobject_create_and_add(name, &dev->kobj);
-	if (!b->kobj)
+	if (!b->kobj) {
+		err = -EINVAL;
 		goto out_free;
-
-#ifndef CONFIG_SMP
-	cpumask_setall(b->cpus);
-#else
-	cpumask_set_cpu(cpu, b->cpus);
-#endif
+	}
 
 	per_cpu(threshold_banks, cpu)[bank] = b;
 
-	err = local_allocate_threshold_blocks(cpu, bank);
-	if (err)
-		goto out_free;
+	if (is_shared_bank(bank)) {
+		atomic_set(&b->cpus, 1);
 
-	for_each_cpu(i, b->cpus) {
-		if (i == cpu)
-			continue;
-
-		dev = per_cpu(mce_device, i);
-		if (dev)
-			err = sysfs_create_link(&dev->kobj,b->kobj, name);
-		if (err)
-			goto out;
-
-		per_cpu(threshold_banks, i)[bank] = b;
+		/* nb is already initialized, see above */
+		if (nb) {
+			WARN_ON(nb->bank4);
+			nb->bank4 = b;
+		}
 	}
 
-	goto out;
+	err = allocate_threshold_blocks(cpu, bank, 0,
+					MSR_IA32_MC0_MISC + bank * 4);
+	if (!err)
+		goto out;
 
-out_free:
-	per_cpu(threshold_banks, cpu)[bank] = NULL;
-	free_cpumask_var(b->cpus);
+ out_free:
 	kfree(b);
-out:
+
+ out:
 	return err;
 }
 
@@ -642,9 +667,17 @@ out:
 static __cpuinit int threshold_create_device(unsigned int cpu)
 {
 	unsigned int bank;
+	struct threshold_bank **bp;
 	int err = 0;
 
-	for (bank = 0; bank < NR_BANKS; ++bank) {
+	bp = kzalloc(sizeof(struct threshold_bank *) * mca_cfg.banks,
+		     GFP_KERNEL);
+	if (!bp)
+		return -ENOMEM;
+
+	per_cpu(threshold_banks, cpu) = bp;
+
+	for (bank = 0; bank < mca_cfg.banks; ++bank) {
 		if (!(per_cpu(bank_map, cpu) & (1 << bank)))
 			continue;
 		err = threshold_create_bank(cpu, bank);
@@ -654,12 +687,6 @@ static __cpuinit int threshold_create_device(unsigned int cpu)
 
 	return err;
 }
-
-/*
- * let's be hotplug friendly.
- * in case of multiple core processors, the first core always takes ownership
- *   of shared sysfs dir/files, and rest of the cores will be symlinked to it.
- */
 
 static void deallocate_threshold_block(unsigned int cpu,
 						 unsigned int bank)
@@ -681,41 +708,42 @@ static void deallocate_threshold_block(unsigned int cpu,
 	per_cpu(threshold_banks, cpu)[bank]->blocks = NULL;
 }
 
+static void __threshold_remove_blocks(struct threshold_bank *b)
+{
+	struct threshold_block *pos = NULL;
+	struct threshold_block *tmp = NULL;
+
+	kobject_del(b->kobj);
+
+	list_for_each_entry_safe(pos, tmp, &b->blocks->miscj, miscj)
+		kobject_del(&pos->kobj);
+}
+
 static void threshold_remove_bank(unsigned int cpu, int bank)
 {
+	struct amd_northbridge *nb;
 	struct threshold_bank *b;
-	struct device *dev;
-	char name[32];
-	int i = 0;
 
 	b = per_cpu(threshold_banks, cpu)[bank];
 	if (!b)
 		return;
+
 	if (!b->blocks)
 		goto free_out;
 
-	sprintf(name, "threshold_bank%i", bank);
-
-#ifdef CONFIG_SMP
-	/* sibling symlink */
-	if (shared_bank[bank] && b->blocks->cpu != cpu) {
-		dev = per_cpu(mce_device, cpu);
-		sysfs_remove_link(&dev->kobj, name);
-		per_cpu(threshold_banks, cpu)[bank] = NULL;
-
-		return;
-	}
-#endif
-
-	/* remove all sibling symlinks before unregistering */
-	for_each_cpu(i, b->cpus) {
-		if (i == cpu)
-			continue;
-
-		dev = per_cpu(mce_device, i);
-		if (dev)
-			sysfs_remove_link(&dev->kobj, name);
-		per_cpu(threshold_banks, i)[bank] = NULL;
+	if (is_shared_bank(bank)) {
+		if (!atomic_dec_and_test(&b->cpus)) {
+			__threshold_remove_blocks(b);
+			per_cpu(threshold_banks, cpu)[bank] = NULL;
+			return;
+		} else {
+			/*
+			 * the last CPU on this node using the shared bank is
+			 * going away, remove that bank now.
+			 */
+			nb = node_to_amd_nb(amd_get_nb_id(cpu));
+			nb->bank4 = NULL;
+		}
 	}
 
 	deallocate_threshold_block(cpu, bank);
@@ -723,7 +751,6 @@ static void threshold_remove_bank(unsigned int cpu, int bank)
 free_out:
 	kobject_del(b->kobj);
 	kobject_put(b->kobj);
-	free_cpumask_var(b->cpus);
 	kfree(b);
 	per_cpu(threshold_banks, cpu)[bank] = NULL;
 }
@@ -732,11 +759,12 @@ static void threshold_remove_device(unsigned int cpu)
 {
 	unsigned int bank;
 
-	for (bank = 0; bank < NR_BANKS; ++bank) {
+	for (bank = 0; bank < mca_cfg.banks; ++bank) {
 		if (!(per_cpu(bank_map, cpu) & (1 << bank)))
 			continue;
 		threshold_remove_bank(cpu, bank);
 	}
+	kfree(per_cpu(threshold_banks, cpu));
 }
 
 /* get notified when a cpu comes on/off */
@@ -772,4 +800,24 @@ static __init int threshold_init_device(void)
 
 	return 0;
 }
-device_initcall(threshold_init_device);
+/*
+ * there are 3 funcs which need to be _initcalled in a logic sequence:
+ * 1. xen_late_init_mcelog
+ * 2. mcheck_init_device
+ * 3. threshold_init_device
+ *
+ * xen_late_init_mcelog must register xen_mce_chrdev_device before
+ * native mce_chrdev_device registration if running under xen platform;
+ *
+ * mcheck_init_device should be inited before threshold_init_device to
+ * initialize mce_device, otherwise a NULL ptr dereference will cause panic.
+ *
+ * so we use following _initcalls
+ * 1. device_initcall(xen_late_init_mcelog);
+ * 2. device_initcall_sync(mcheck_init_device);
+ * 3. late_initcall(threshold_init_device);
+ *
+ * when running under xen, the initcall order is 1,2,3;
+ * on baremetal, we skip 1 and we do only 2 and 3.
+ */
+late_initcall(threshold_init_device);

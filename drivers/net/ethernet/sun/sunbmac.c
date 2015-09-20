@@ -212,7 +212,6 @@ static void bigmac_clean_rings(struct bigmac *bp)
 static void bigmac_init_rings(struct bigmac *bp, int from_irq)
 {
 	struct bmac_init_block *bb = bp->bmac_block;
-	struct net_device *dev = bp->dev;
 	int i;
 	gfp_t gfp_flags = GFP_KERNEL;
 
@@ -233,7 +232,6 @@ static void bigmac_init_rings(struct bigmac *bp, int from_irq)
 			continue;
 
 		bp->rx_skbs[i] = skb;
-		skb->dev = dev;
 
 		/* Because we reserve afterwards. */
 		skb_put(skb, ETH_FRAME_LEN);
@@ -838,7 +836,6 @@ static void bigmac_rx(struct bigmac *bp)
 					 RX_BUF_ALLOC_SIZE - 34,
 					 DMA_FROM_DEVICE);
 			bp->rx_skbs[elem] = new_skb;
-			new_skb->dev = bp->dev;
 			skb_put(new_skb, ETH_FRAME_LEN);
 			skb_reserve(new_skb, 34);
 			this->rx_addr =
@@ -1045,8 +1042,8 @@ static void bigmac_set_multicast(struct net_device *dev)
 /* Ethtool support... */
 static void bigmac_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info)
 {
-	strcpy(info->driver, "sunbmac");
-	strcpy(info->version, "2.0");
+	strlcpy(info->driver, "sunbmac", sizeof(info->driver));
+	strlcpy(info->version, "2.0", sizeof(info->version));
 }
 
 static u32 bigmac_get_link(struct net_device *dev)
@@ -1077,8 +1074,8 @@ static const struct net_device_ops bigmac_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
-static int __devinit bigmac_ether_init(struct platform_device *op,
-				       struct platform_device *qec_op)
+static int bigmac_ether_init(struct platform_device *op,
+			     struct platform_device *qec_op)
 {
 	static int version_printed;
 	struct net_device *dev;
@@ -1172,10 +1169,8 @@ static int __devinit bigmac_ether_init(struct platform_device *op,
 	bp->bmac_block = dma_alloc_coherent(&bp->bigmac_op->dev,
 					    PAGE_SIZE,
 					    &bp->bblock_dvma, GFP_ATOMIC);
-	if (bp->bmac_block == NULL || bp->bblock_dvma == 0) {
-		printk(KERN_ERR "BIGMAC: Cannot allocate consistent DMA.\n");
+	if (bp->bmac_block == NULL || bp->bblock_dvma == 0)
 		goto fail_and_cleanup;
-	}
 
 	/* Get the board revision of this BigMAC. */
 	bp->board_rev = of_getintprop_default(bp->bigmac_op->dev.of_node,
@@ -1236,7 +1231,7 @@ fail_and_cleanup:
 /* QEC can be the parent of either QuadEthernet or a BigMAC.  We want
  * the latter.
  */
-static int __devinit bigmac_sbus_probe(struct platform_device *op)
+static int bigmac_sbus_probe(struct platform_device *op)
 {
 	struct device *parent = op->dev.parent;
 	struct platform_device *qec_op;
@@ -1246,7 +1241,7 @@ static int __devinit bigmac_sbus_probe(struct platform_device *op)
 	return bigmac_ether_init(op, qec_op);
 }
 
-static int __devexit bigmac_sbus_remove(struct platform_device *op)
+static int bigmac_sbus_remove(struct platform_device *op)
 {
 	struct bigmac *bp = dev_get_drvdata(&op->dev);
 	struct device *parent = op->dev.parent;
@@ -1289,7 +1284,7 @@ static struct platform_driver bigmac_sbus_driver = {
 		.of_match_table = bigmac_sbus_match,
 	},
 	.probe		= bigmac_sbus_probe,
-	.remove		= __devexit_p(bigmac_sbus_remove),
+	.remove		= bigmac_sbus_remove,
 };
 
 module_platform_driver(bigmac_sbus_driver);

@@ -1,7 +1,7 @@
 /*
  * wm8962.c  --  WM8962 ALSA SoC Audio driver
  *
- * Copyright 2010 Wolfson Microelectronics plc
+ * Copyright 2010-2 Wolfson Microelectronics plc
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
  *
@@ -153,6 +153,7 @@ static struct reg_default wm8962_reg[] = {
 	{ 40, 0x0000 },   /* R40    - SPKOUTL volume */
 	{ 41, 0x0000 },   /* R41    - SPKOUTR volume */
 
+	{ 49, 0x0010 },   /* R49    - Class D Control 1 */
 	{ 51, 0x0003 },   /* R51    - Class D Control 2 */
 
 	{ 56, 0x0506 },   /* R56    - Clocking 4 */
@@ -794,7 +795,6 @@ static bool wm8962_volatile_register(struct device *dev, unsigned int reg)
 	case WM8962_ALC2:
 	case WM8962_THERMAL_SHUTDOWN_STATUS:
 	case WM8962_ADDITIONAL_CONTROL_4:
-	case WM8962_CLASS_D_CONTROL_1:
 	case WM8962_DC_SERVO_6:
 	case WM8962_INTERRUPT_STATUS_1:
 	case WM8962_INTERRUPT_STATUS_2:
@@ -1478,7 +1478,8 @@ static const DECLARE_TLV_DB_SCALE(eq_tlv, -1200, 100, 0);
 
 static int wm8962_dsp2_write_config(struct snd_soc_codec *codec)
 {
-	return 0;
+	return regcache_sync_region(codec->control_data,
+				    WM8962_HDBASS_AI_1, WM8962_MAX_REGISTER);
 }
 
 static int wm8962_dsp2_set_enable(struct snd_soc_codec *codec, u16 val)
@@ -1757,10 +1758,22 @@ SOC_DOUBLE_R_TLV("EQ4 Volume", WM8962_EQ3, WM8962_EQ23,
 SOC_DOUBLE_R_TLV("EQ5 Volume", WM8962_EQ3, WM8962_EQ23,
 		 WM8962_EQL_B5_GAIN_SHIFT, 31, 0, eq_tlv),
 
+SOC_SINGLE("3D Switch", WM8962_THREED1, 0, 1, 0),
+SND_SOC_BYTES_MASK("3D Coefficients", WM8962_THREED1, 4, WM8962_THREED_ENA),
+
+SOC_SINGLE("DF1 Switch", WM8962_DF1, 0, 1, 0),
+SND_SOC_BYTES_MASK("DF1 Coefficients", WM8962_DF1, 7, WM8962_DF1_ENA),
+
+SOC_SINGLE("DRC Switch", WM8962_DRC_1, 0, 1, 0),
+SND_SOC_BYTES_MASK("DRC Coefficients", WM8962_DRC_1, 5, WM8962_DRC_ENA),
+
 WM8962_DSP2_ENABLE("VSS Switch", WM8962_VSS_ENA_SHIFT),
+SND_SOC_BYTES("VSS Coefficients", WM8962_VSS_XHD2_1, 148),
 WM8962_DSP2_ENABLE("HPF1 Switch", WM8962_HPF1_ENA_SHIFT),
 WM8962_DSP2_ENABLE("HPF2 Switch", WM8962_HPF2_ENA_SHIFT),
+SND_SOC_BYTES("HPF Coefficients", WM8962_LHPF2, 1),
 WM8962_DSP2_ENABLE("HD Bass Switch", WM8962_HDBASS_ENA_SHIFT),
+SND_SOC_BYTES("HD Bass Coefficients", WM8962_HDBASS_AI_1, 30),
 };
 
 static const struct snd_kcontrol_new wm8962_spk_mono_controls[] = {
@@ -2524,8 +2537,7 @@ static int wm8962_hw_params(struct snd_pcm_substream *substream,
 			    struct snd_pcm_hw_params *params,
 			    struct snd_soc_dai *dai)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_codec *codec = dai->codec;
 	struct wm8962_priv *wm8962 = snd_soc_codec_get_drvdata(codec);
 	int i;
 	int aif0 = 0;
@@ -2572,6 +2584,9 @@ static int wm8962_hw_params(struct snd_pcm_substream *substream,
 	snd_soc_update_bits(codec, WM8962_ADDITIONAL_CONTROL_3,
 			    WM8962_SAMPLE_RATE_INT_MODE |
 			    WM8962_SAMPLE_RATE_MASK, adctl3);
+
+	dev_dbg(codec->dev, "hw_params set BCLK %dHz LRCLK %dHz\n",
+		wm8962->bclk, wm8962->lrclk);
 
 	if (codec->dapm.bias_level == SND_SOC_BIAS_ON)
 		wm8962_configure_bclk(codec);
@@ -2860,22 +2875,20 @@ static int wm8962_set_fll(struct snd_soc_codec *codec, int fll_id, int source,
 
 	ret = 0;
 
-	if (fll1 & WM8962_FLL_ENA) {
-		/* This should be a massive overestimate but go even
-		 * higher if we'll error out
-		 */
-		if (wm8962->irq)
-			timeout = msecs_to_jiffies(5);
-		else
-			timeout = msecs_to_jiffies(1);
+	/* This should be a massive overestimate but go even
+	 * higher if we'll error out
+	 */
+	if (wm8962->irq)
+		timeout = msecs_to_jiffies(5);
+	else
+		timeout = msecs_to_jiffies(1);
 
-		timeout = wait_for_completion_timeout(&wm8962->fll_lock,
-						      timeout);
+	timeout = wait_for_completion_timeout(&wm8962->fll_lock,
+					      timeout);
 
-		if (timeout == 0 && wm8962->irq) {
-			dev_err(codec->dev, "FLL lock timed out");
-			ret = -ETIMEDOUT;
-		}
+	if (timeout == 0 && wm8962->irq) {
+		dev_err(codec->dev, "FLL lock timed out");
+		ret = -ETIMEDOUT;
 	}
 
 	wm8962->fll_fref = Fref;
@@ -2888,12 +2901,21 @@ static int wm8962_set_fll(struct snd_soc_codec *codec, int fll_id, int source,
 static int wm8962_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_codec *codec = dai->codec;
-	int val;
+	int val, ret;
 
 	if (mute)
-		val = WM8962_DAC_MUTE;
+		val = WM8962_DAC_MUTE | WM8962_DAC_MUTE_ALT;
 	else
 		val = 0;
+
+	/**
+	 * The DAC mute bit is mirrored in two registers, update both to keep
+	 * the register cache consistent.
+	 */
+	ret = snd_soc_update_bits(codec, WM8962_CLASS_D_CONTROL_1,
+				  WM8962_DAC_MUTE_ALT, val);
+	if (ret < 0)
+		return ret;
 
 	return snd_soc_update_bits(codec, WM8962_ADC_DAC_CONTROL_1,
 				   WM8962_DAC_MUTE, val);
@@ -3176,7 +3198,7 @@ static void wm8962_init_beep(struct snd_soc_codec *codec)
 	struct wm8962_priv *wm8962 = snd_soc_codec_get_drvdata(codec);
 	int ret;
 
-	wm8962->beep = input_allocate_device();
+	wm8962->beep = devm_input_allocate_device(codec->dev);
 	if (!wm8962->beep) {
 		dev_err(codec->dev, "Failed to allocate beep device\n");
 		return;
@@ -3197,7 +3219,6 @@ static void wm8962_init_beep(struct snd_soc_codec *codec)
 
 	ret = input_register_device(wm8962->beep);
 	if (ret != 0) {
-		input_free_device(wm8962->beep);
 		wm8962->beep = NULL;
 		dev_err(codec->dev, "Failed to register beep device\n");
 	}
@@ -3214,7 +3235,6 @@ static void wm8962_free_beep(struct snd_soc_codec *codec)
 	struct wm8962_priv *wm8962 = snd_soc_codec_get_drvdata(codec);
 
 	device_remove_file(codec->dev, &dev_attr_beep);
-	input_unregister_device(wm8962->beep);
 	cancel_work_sync(&wm8962->beep_work);
 	wm8962->beep = NULL;
 
@@ -3575,8 +3595,8 @@ static const struct regmap_config wm8962_regmap = {
 	.cache_type = REGCACHE_RBTREE,
 };
 
-static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm8962_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8962_pdata *pdata = dev_get_platdata(&i2c->dev);
 	struct wm8962_priv *wm8962;
@@ -3597,7 +3617,7 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	for (i = 0; i < ARRAY_SIZE(wm8962->supplies); i++)
 		wm8962->supplies[i].supply = wm8962_supply_names[i];
 
-	ret = regulator_bulk_get(&i2c->dev, ARRAY_SIZE(wm8962->supplies),
+	ret = devm_regulator_bulk_get(&i2c->dev, ARRAY_SIZE(wm8962->supplies),
 				 wm8962->supplies);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to request supplies: %d\n", ret);
@@ -3608,10 +3628,10 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 				    wm8962->supplies);
 	if (ret != 0) {
 		dev_err(&i2c->dev, "Failed to enable supplies: %d\n", ret);
-		goto err_get;
+		return ret;
 	}
 
-	wm8962->regmap = regmap_init_i2c(i2c, &wm8962_regmap);
+	wm8962->regmap = devm_regmap_init_i2c(i2c, &wm8962_regmap);
 	if (IS_ERR(wm8962->regmap)) {
 		ret = PTR_ERR(wm8962->regmap);
 		dev_err(&i2c->dev, "Failed to allocate regmap: %d\n", ret);
@@ -3628,20 +3648,20 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	ret = regmap_read(wm8962->regmap, WM8962_SOFTWARE_RESET, &reg);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to read ID register\n");
-		goto err_regmap;
+		goto err_enable;
 	}
 	if (reg != 0x6243) {
 		dev_err(&i2c->dev,
 			"Device is not a WM8962, ID %x != 0x6243\n", reg);
 		ret = -EINVAL;
-		goto err_regmap;
+		goto err_enable;
 	}
 
 	ret = regmap_read(wm8962->regmap, WM8962_RIGHT_INPUT_VOLUME, &reg);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to read device revision: %d\n",
 			ret);
-		goto err_regmap;
+		goto err_enable;
 	}
 
 	dev_info(&i2c->dev, "customer id %x revision %c\n",
@@ -3654,7 +3674,7 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	ret = wm8962_reset(wm8962);
 	if (ret < 0) {
 		dev_err(&i2c->dev, "Failed to issue reset\n");
-		goto err_regmap;
+		goto err_enable;
 	}
 
 	if (pdata && pdata->in4_dc_measure) {
@@ -3673,30 +3693,24 @@ static __devinit int wm8962_i2c_probe(struct i2c_client *i2c,
 	ret = snd_soc_register_codec(&i2c->dev,
 				     &soc_codec_dev_wm8962, &wm8962_dai, 1);
 	if (ret < 0)
-		goto err_regmap;
+		goto err_enable;
+
+	regcache_cache_only(wm8962->regmap, true);
 
 	/* The drivers should power up as needed */
 	regulator_bulk_disable(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
 
 	return 0;
 
-err_regmap:
-	regmap_exit(wm8962->regmap);
 err_enable:
 	regulator_bulk_disable(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
-err_get:
-	regulator_bulk_free(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
 err:
 	return ret;
 }
 
-static __devexit int wm8962_i2c_remove(struct i2c_client *client)
+static int wm8962_i2c_remove(struct i2c_client *client)
 {
-	struct wm8962_priv *wm8962 = dev_get_drvdata(&client->dev);
-
 	snd_soc_unregister_codec(&client->dev);
-	regmap_exit(wm8962->regmap);
-	regulator_bulk_free(ARRAY_SIZE(wm8962->supplies), wm8962->supplies);
 	return 0;
 }
 
@@ -3715,6 +3729,7 @@ static int wm8962_runtime_resume(struct device *dev)
 	}
 
 	regcache_cache_only(wm8962->regmap, false);
+<<<<<<< HEAD
 
 	wm8962_reset(wm8962);
 
@@ -3728,12 +3743,12 @@ static int wm8962_runtime_resume(struct device *dev)
 	regmap_update_bits(wm8962->regmap, WM8962_PWR_MGMT_1,
 			   WM8962_VMID_SEL_MASK | WM8962_BIAS_ENA,
 			   WM8962_BIAS_ENA | 0x180);
+=======
+>>>>>>> v3.10.88
 
-	msleep(5);
+	wm8962_reset(wm8962);
 
-	/* VMID back to 2x250k for standby */
-	regmap_update_bits(wm8962->regmap, WM8962_PWR_MGMT_1,
-			   WM8962_VMID_SEL_MASK, 0x100);
+	regcache_sync(wm8962->regmap);
 
 	return 0;
 }
@@ -3768,14 +3783,21 @@ static const struct i2c_device_id wm8962_i2c_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, wm8962_i2c_id);
 
+static const struct of_device_id wm8962_of_match[] = {
+	{ .compatible = "wlf,wm8962", },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, wm8962_of_match);
+
 static struct i2c_driver wm8962_i2c_driver = {
 	.driver = {
 		.name = "wm8962",
 		.owner = THIS_MODULE,
+		.of_match_table = wm8962_of_match,
 		.pm = &wm8962_pm,
 	},
 	.probe =    wm8962_i2c_probe,
-	.remove =   __devexit_p(wm8962_i2c_remove),
+	.remove =   wm8962_i2c_remove,
 	.id_table = wm8962_i2c_id,
 };
 

@@ -35,7 +35,7 @@
 
 asmlinkage void sha1_transform_ssse3(u32 *digest, const char *data,
 				     unsigned int rounds);
-#ifdef SHA1_ENABLE_AVX_SUPPORT
+#ifdef CONFIG_AS_AVX
 asmlinkage void sha1_transform_avx(u32 *digest, const char *data,
 				   unsigned int rounds);
 #endif
@@ -184,7 +184,7 @@ static struct shash_alg alg = {
 	}
 };
 
-#ifdef SHA1_ENABLE_AVX_SUPPORT
+#ifdef CONFIG_AS_AVX
 static bool __init avx_usable(void)
 {
 	u64 xcr0;
@@ -209,7 +209,7 @@ static int __init sha1_ssse3_mod_init(void)
 	if (cpu_has_ssse3)
 		sha1_transform_asm = sha1_transform_ssse3;
 
-#ifdef SHA1_ENABLE_AVX_SUPPORT
+#ifdef CONFIG_AS_AVX
 	/* allow AVX to override SSSE3, it's a little faster */
 	if (avx_usable())
 		sha1_transform_asm = sha1_transform_avx;
@@ -237,4 +237,4 @@ module_exit(sha1_ssse3_mod_fini);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA1 Secure Hash Algorithm, Supplemental SSE3 accelerated");
 
-MODULE_ALIAS("sha1");
+MODULE_ALIAS_CRYPTO("sha1");

@@ -37,11 +37,14 @@ struct inet_skb_parm {
 	struct ip_options	opt;		/* Compiled IP options		*/
 	unsigned char		flags;
 
-#define IPSKB_FORWARDED		1
-#define IPSKB_XFRM_TUNNEL_SIZE	2
-#define IPSKB_XFRM_TRANSFORMED	4
-#define IPSKB_FRAG_COMPLETE	8
-#define IPSKB_REROUTED		16
+#define IPSKB_FORWARDED		BIT(0)
+#define IPSKB_XFRM_TUNNEL_SIZE	BIT(1)
+#define IPSKB_XFRM_TRANSFORMED	BIT(2)
+#define IPSKB_FRAG_COMPLETE	BIT(3)
+#define IPSKB_REROUTED		BIT(4)
+#define IPSKB_DOREDIRECT	BIT(5)
+
+	u16			frag_max_size;
 };
 
 static inline unsigned int ip_hdrlen(const struct sk_buff *skb)
@@ -120,7 +123,7 @@ extern struct sk_buff  *__ip_make_skb(struct sock *sk,
 				      struct flowi4 *fl4,
 				      struct sk_buff_head *queue,
 				      struct inet_cork *cork);
-extern int		ip_send_skb(struct sk_buff *skb);
+extern int		ip_send_skb(struct net *net, struct sk_buff *skb);
 extern int		ip_push_pending_frames(struct sock *sk, struct flowi4 *fl4);
 extern void		ip_flush_pending_frames(struct sock *sk);
 extern struct sk_buff  *ip_make_skb(struct sock *sk,
@@ -141,22 +144,7 @@ static inline struct sk_buff *ip_finish_skb(struct sock *sk, struct flowi4 *fl4)
 extern int		ip4_datagram_connect(struct sock *sk, 
 					     struct sockaddr *uaddr, int addr_len);
 
-/*
- *	Map a multicast IP onto multicast MAC for type Token Ring.
- *      This conforms to RFC1469 Option 2 Multicasting i.e.
- *      using a functional address to transmit / receive 
- *      multicast packets.
- */
-
-static inline void ip_tr_mc_map(__be32 addr, char *buf)
-{
-	buf[0]=0xC0;
-	buf[1]=0x00;
-	buf[2]=0x00;
-	buf[3]=0x04;
-	buf[4]=0x00;
-	buf[5]=0x00;
-}
+extern void ip4_datagram_release_cb(struct sock *sk);
 
 struct ip_reply_arg {
 	struct kvec iov[1];   
@@ -176,8 +164,9 @@ static inline __u8 ip_reply_arg_flowi_flags(const struct ip_reply_arg *arg)
 	return (arg->flags & IP_REPLY_ARG_NOSRCCHECK) ? FLOWI_FLAG_ANYSRC : 0;
 }
 
-void ip_send_reply(struct sock *sk, struct sk_buff *skb, __be32 daddr,
-		   const struct ip_reply_arg *arg, unsigned int len);
+void ip_send_unicast_reply(struct sock *sk, struct sk_buff *skb, __be32 daddr,
+			   __be32 saddr, const struct ip_reply_arg *arg,
+			   unsigned int len);
 
 struct ipv4_config {
 	int	log_martians;
@@ -223,13 +212,13 @@ static inline int inet_is_reserved_local_port(int port)
 
 extern int sysctl_ip_nonlocal_bind;
 
-extern struct ctl_path net_core_path[];
-extern struct ctl_path net_ipv4_ctl_path[];
-
 /* From inetpeer.c */
 extern int inet_peer_threshold;
 extern int inet_peer_minttl;
 extern int inet_peer_maxttl;
+
+/* From ip_input.c */
+extern int sysctl_ip_early_demux;
 
 /* From ip_output.c */
 extern int sysctl_ip_dynaddr;
@@ -268,9 +257,14 @@ int ip_dont_fragment(struct sock *sk, struct dst_entry *dst)
 		 !(dst_metric_locked(dst, RTAX_MTU)));
 }
 
-extern void __ip_select_ident(struct iphdr *iph, struct dst_entry *dst, int more);
+u32 ip_idents_reserve(u32 hash, int segs);
+void __ip_select_ident(struct iphdr *iph, int segs);
 
+<<<<<<< HEAD
 static inline void ip_select_ident(struct sk_buff *skb, struct dst_entry *dst, struct sock *sk)
+=======
+static inline void ip_select_ident_segs(struct sk_buff *skb, struct sock *sk, int segs)
+>>>>>>> v3.10.88
 {
 	struct iphdr *iph = ip_hdr(skb);
 
@@ -280,6 +274,7 @@ static inline void ip_select_ident(struct sk_buff *skb, struct dst_entry *dst, s
 		 * does not change, they drop every other packet in
 		 * a TCP stream using header compression.
 		 */
+<<<<<<< HEAD
 		iph->id = (sk && inet_sk(sk)->inet_daddr) ?
 					htons(inet_sk(sk)->inet_id++) : 0;
 	} else
@@ -291,13 +286,22 @@ static inline void ip_select_ident_more(struct sk_buff *skb, struct dst_entry *d
 	struct iphdr *iph = ip_hdr(skb);
 
 	if ((iph->frag_off & htons(IP_DF)) && !skb->local_df) {
+=======
+>>>>>>> v3.10.88
 		if (sk && inet_sk(sk)->inet_daddr) {
 			iph->id = htons(inet_sk(sk)->inet_id);
-			inet_sk(sk)->inet_id += 1 + more;
-		} else
+			inet_sk(sk)->inet_id += segs;
+		} else {
 			iph->id = 0;
-	} else
-		__ip_select_ident(iph, dst, more);
+		}
+	} else {
+		__ip_select_ident(iph, segs);
+	}
+}
+
+static inline void ip_select_ident(struct sk_buff *skb, struct sock *sk)
+{
+	ip_select_ident_segs(skb, sk, 1);
 }
 
 /*
@@ -470,7 +474,7 @@ extern int	compat_ip_getsockopt(struct sock *sk, int level,
 			int optname, char __user *optval, int __user *optlen);
 extern int	ip_ra_control(struct sock *sk, unsigned char on, void (*destructor)(struct sock *));
 
-extern int 	ip_recv_error(struct sock *sk, struct msghdr *msg, int len);
+extern int 	ip_recv_error(struct sock *sk, struct msghdr *msg, int len, int *addr_len);
 extern void	ip_icmp_error(struct sock *sk, struct sk_buff *skb, int err, 
 			      __be16 port, u32 info, u8 *payload);
 extern void	ip_local_error(struct sock *sk, int err, __be32 daddr, __be16 dport,

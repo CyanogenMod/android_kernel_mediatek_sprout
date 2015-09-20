@@ -3,11 +3,6 @@
 
 #ifdef __KERNEL__
 
-#if defined(CONFIG_CPU_USE_DOMAINS) && defined(CONFIG_SMP)
-/* ARM doesn't provide unprivileged exclusive memory accessors */
-#include <asm-generic/futex.h>
-#else
-
 #include <linux/futex.h>
 #include <linux/uaccess.h>
 #include <asm/errno.h>
@@ -19,6 +14,7 @@
 	"	.long	1b, 4f, 2b, 4f\n"			\
 	"	.popsection\n"					\
 	"	.pushsection .fixup,\"ax\"\n"			\
+	"	.align	2\n"					\
 	"4:	mov	%0, " err_reg "\n"			\
 	"	b	3b\n"					\
 	"	.popsection"
@@ -163,6 +159,5 @@ futex_atomic_op_inuser (int encoded_op, u32 __user *uaddr)
 	return ret;
 }
 
-#endif /* !(CPU_USE_DOMAINS && SMP) */
 #endif /* __KERNEL__ */
 #endif /* _ASM_ARM_FUTEX_H */

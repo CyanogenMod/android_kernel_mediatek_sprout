@@ -509,8 +509,7 @@ static void cbq_ovl_delay(struct cbq_class *cl)
 			cl->cpriority = TC_CBQ_MAXPRIO;
 			q->pmask |= (1<<TC_CBQ_MAXPRIO);
 
-			expires = ktime_set(0, 0);
-			expires = ktime_add_ns(expires, PSCHED_TICKS2NS(sched));
+			expires = ns_to_ktime(PSCHED_TICKS2NS(sched));
 			if (hrtimer_try_to_cancel(&q->delay_timer) &&
 			    ktime_to_ns(ktime_sub(
 					hrtimer_get_expires(&q->delay_timer),
@@ -1045,14 +1044,13 @@ static void cbq_adjust_levels(struct cbq_class *this)
 static void cbq_normalize_quanta(struct cbq_sched_data *q, int prio)
 {
 	struct cbq_class *cl;
-	struct hlist_node *n;
 	unsigned int h;
 
 	if (q->quanta[prio] == 0)
 		return;
 
 	for (h = 0; h < q->clhash.hashsize; h++) {
-		hlist_for_each_entry(cl, n, &q->clhash.hash[h], common.hnode) {
+		hlist_for_each_entry(cl, &q->clhash.hash[h], common.hnode) {
 			/* BUGGGG... Beware! This expression suffer of
 			 * arithmetic overflows!
 			 */
@@ -1091,10 +1089,9 @@ static void cbq_sync_defmap(struct cbq_class *cl)
 			continue;
 
 		for (h = 0; h < q->clhash.hashsize; h++) {
-			struct hlist_node *n;
 			struct cbq_class *c;
 
-			hlist_for_each_entry(c, n, &q->clhash.hash[h],
+			hlist_for_each_entry(c, &q->clhash.hash[h],
 					     common.hnode) {
 				if (c->split == split && c->level < level &&
 				    c->defmap & (1<<i)) {
@@ -1214,7 +1211,6 @@ cbq_reset(struct Qdisc *sch)
 {
 	struct cbq_sched_data *q = qdisc_priv(sch);
 	struct cbq_class *cl;
-	struct hlist_node *n;
 	int prio;
 	unsigned int h;
 
@@ -1232,7 +1228,7 @@ cbq_reset(struct Qdisc *sch)
 		q->active[prio] = NULL;
 
 	for (h = 0; h < q->clhash.hashsize; h++) {
-		hlist_for_each_entry(cl, n, &q->clhash.hash[h], common.hnode) {
+		hlist_for_each_entry(cl, &q->clhash.hash[h], common.hnode) {
 			qdisc_reset(cl->q);
 
 			cl->next_alive = NULL;
@@ -1429,7 +1425,8 @@ static int cbq_dump_rate(struct sk_buff *skb, struct cbq_class *cl)
 {
 	unsigned char *b = skb_tail_pointer(skb);
 
-	NLA_PUT(skb, TCA_CBQ_RATE, sizeof(cl->R_tab->rate), &cl->R_tab->rate);
+	if (nla_put(skb, TCA_CBQ_RATE, sizeof(cl->R_tab->rate), &cl->R_tab->rate))
+		goto nla_put_failure;
 	return skb->len;
 
 nla_put_failure:
@@ -1454,7 +1451,8 @@ static int cbq_dump_lss(struct sk_buff *skb, struct cbq_class *cl)
 	opt.minidle = (u32)(-cl->minidle);
 	opt.offtime = cl->offtime;
 	opt.change = ~0;
-	NLA_PUT(skb, TCA_CBQ_LSSOPT, sizeof(opt), &opt);
+	if (nla_put(skb, TCA_CBQ_LSSOPT, sizeof(opt), &opt))
+		goto nla_put_failure;
 	return skb->len;
 
 nla_put_failure:
@@ -1473,7 +1471,8 @@ static int cbq_dump_wrr(struct sk_buff *skb, struct cbq_class *cl)
 	opt.priority = cl->priority + 1;
 	opt.cpriority = cl->cpriority + 1;
 	opt.weight = cl->weight;
-	NLA_PUT(skb, TCA_CBQ_WRROPT, sizeof(opt), &opt);
+	if (nla_put(skb, TCA_CBQ_WRROPT, sizeof(opt), &opt))
+		goto nla_put_failure;
 	return skb->len;
 
 nla_put_failure:
@@ -1490,7 +1489,8 @@ static int cbq_dump_ovl(struct sk_buff *skb, struct cbq_class *cl)
 	opt.priority2 = cl->priority2 + 1;
 	opt.pad = 0;
 	opt.penalty = cl->penalty;
-	NLA_PUT(skb, TCA_CBQ_OVL_STRATEGY, sizeof(opt), &opt);
+	if (nla_put(skb, TCA_CBQ_OVL_STRATEGY, sizeof(opt), &opt))
+		goto nla_put_failure;
 	return skb->len;
 
 nla_put_failure:
@@ -1507,7 +1507,8 @@ static int cbq_dump_fopt(struct sk_buff *skb, struct cbq_class *cl)
 		opt.split = cl->split ? cl->split->common.classid : 0;
 		opt.defmap = cl->defmap;
 		opt.defchange = ~0;
-		NLA_PUT(skb, TCA_CBQ_FOPT, sizeof(opt), &opt);
+		if (nla_put(skb, TCA_CBQ_FOPT, sizeof(opt), &opt))
+			goto nla_put_failure;
 	}
 	return skb->len;
 
@@ -1526,7 +1527,8 @@ static int cbq_dump_police(struct sk_buff *skb, struct cbq_class *cl)
 		opt.police = cl->police;
 		opt.__res1 = 0;
 		opt.__res2 = 0;
-		NLA_PUT(skb, TCA_CBQ_POLICE, sizeof(opt), &opt);
+		if (nla_put(skb, TCA_CBQ_POLICE, sizeof(opt), &opt))
+			goto nla_put_failure;
 	}
 	return skb->len;
 
@@ -1696,7 +1698,7 @@ static void cbq_destroy_class(struct Qdisc *sch, struct cbq_class *cl)
 static void cbq_destroy(struct Qdisc *sch)
 {
 	struct cbq_sched_data *q = qdisc_priv(sch);
-	struct hlist_node *n, *next;
+	struct hlist_node *next;
 	struct cbq_class *cl;
 	unsigned int h;
 
@@ -1709,11 +1711,11 @@ static void cbq_destroy(struct Qdisc *sch)
 	 * be bound to classes which have been destroyed already. --TGR '04
 	 */
 	for (h = 0; h < q->clhash.hashsize; h++) {
-		hlist_for_each_entry(cl, n, &q->clhash.hash[h], common.hnode)
+		hlist_for_each_entry(cl, &q->clhash.hash[h], common.hnode)
 			tcf_destroy_chain(&cl->filter_list);
 	}
 	for (h = 0; h < q->clhash.hashsize; h++) {
-		hlist_for_each_entry_safe(cl, n, next, &q->clhash.hash[h],
+		hlist_for_each_entry_safe(cl, next, &q->clhash.hash[h],
 					  common.hnode)
 			cbq_destroy_class(sch, cl);
 	}
@@ -2012,14 +2014,13 @@ static void cbq_walk(struct Qdisc *sch, struct qdisc_walker *arg)
 {
 	struct cbq_sched_data *q = qdisc_priv(sch);
 	struct cbq_class *cl;
-	struct hlist_node *n;
 	unsigned int h;
 
 	if (arg->stop)
 		return;
 
 	for (h = 0; h < q->clhash.hashsize; h++) {
-		hlist_for_each_entry(cl, n, &q->clhash.hash[h], common.hnode) {
+		hlist_for_each_entry(cl, &q->clhash.hash[h], common.hnode) {
 			if (arg->count < arg->skip) {
 				arg->count++;
 				continue;

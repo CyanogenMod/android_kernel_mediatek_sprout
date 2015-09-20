@@ -40,16 +40,16 @@
 #include <mach/pxa27x.h>
 #include <mach/audio.h>
 #include <mach/palmz72.h>
-#include <mach/mmc.h>
-#include <mach/pxafb.h>
-#include <mach/irda.h>
-#include <plat/pxa27x_keypad.h>
+#include <linux/platform_data/mmc-pxamci.h>
+#include <linux/platform_data/video-pxafb.h>
+#include <linux/platform_data/irda-pxaficp.h>
+#include <linux/platform_data/keypad-pxa27x.h>
 #include <mach/udc.h>
-#include <mach/palmasoc.h>
+#include <linux/platform_data/asoc-palm27x.h>
 #include <mach/palm27x.h>
 
 #include <mach/pm.h>
-#include <mach/camera.h>
+#include <linux/platform_data/camera-pxa.h>
 
 #include <media/soc_camera.h>
 
@@ -404,7 +404,7 @@ MACHINE_START(PALMZ72, "Palm Zire72")
 	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa27x_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= palmz72_init,
 	.restart	= pxa_restart,
 MACHINE_END

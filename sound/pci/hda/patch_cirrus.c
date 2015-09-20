@@ -19,42 +19,22 @@
  */
 
 #include <linux/init.h>
-#include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/module.h>
 #include <sound/core.h>
+#include <sound/tlv.h>
 #include "hda_codec.h"
 #include "hda_local.h"
+#include "hda_auto_parser.h"
 #include "hda_jack.h"
-#include <sound/tlv.h>
+#include "hda_generic.h"
 
 /*
  */
 
 struct cs_spec {
-	int board_config;
-	struct auto_pin_cfg autocfg;
-	struct hda_multi_out multiout;
-	struct snd_kcontrol *vmaster_sw;
-	struct snd_kcontrol *vmaster_vol;
-
-	hda_nid_t dac_nid[AUTO_CFG_MAX_OUTS];
-	hda_nid_t slave_dig_outs[2];
-
-	unsigned int input_idx[AUTO_PIN_LAST];
-	unsigned int capsrc_idx[AUTO_PIN_LAST];
-	hda_nid_t adc_nid[AUTO_PIN_LAST];
-	unsigned int adc_idx[AUTO_PIN_LAST];
-	unsigned int num_inputs;
-	unsigned int cur_input;
-	unsigned int automic_idx;
-	hda_nid_t cur_adc;
-	unsigned int cur_adc_stream_tag;
-	unsigned int cur_adc_format;
-	hda_nid_t dig_in;
-
-	const struct hda_bind_ctls *capture_bind[2];
+	struct hda_gen_spec gen;
 
 	unsigned int gpio_mask;
 	unsigned int gpio_dir;
@@ -62,16 +42,11 @@ struct cs_spec {
 	unsigned int gpio_eapd_hp; /* EAPD GPIO bit for headphones */
 	unsigned int gpio_eapd_speaker; /* EAPD GPIO bit for speakers */
 
-	struct hda_pcm pcm_rec[2];	/* PCM information */
-
-	unsigned int hp_detect:1;
-	unsigned int mic_detect:1;
 	/* CS421x */
 	unsigned int spdif_detect:1;
+	unsigned int spdif_present:1;
 	unsigned int sense_b:1;
 	hda_nid_t vendor_nid;
-	struct hda_input_mux input_mux;
-	unsigned int last_input;
 };
 
 /* available models with CS420x */
@@ -79,16 +54,22 @@ enum {
 	CS420X_MBP53,
 	CS420X_MBP55,
 	CS420X_IMAC27,
-	CS420X_IMAC27_122,
-	CS420X_APPLE,
+	CS420X_GPIO_13,
+	CS420X_GPIO_23,
+	CS420X_MBP101,
+	CS420X_MBP81,
+	CS420X_MBA42,
 	CS420X_AUTO,
-	CS420X_MODELS
+	/* aliases */
+	CS420X_IMAC27_122 = CS420X_GPIO_23,
+	CS420X_APPLE = CS420X_GPIO_13,
 };
 
 /* CS421x boards */
 enum {
 	CS421X_CDB4210,
-	CS421X_MODELS
+	CS421X_SENSE_B,
+	CS421X_STUMPY,
 };
 
 /* Vendor-specific processing widget */
@@ -173,6 +154,7 @@ static inline void cs_vendor_coef_set(struct hda_codec *codec, unsigned int idx,
 			    AC_VERB_SET_PROC_COEF, coef);
 }
 
+<<<<<<< HEAD
 
 #define HP_EVENT	1
 #define MIC_EVENT	2
@@ -886,6 +868,8 @@ static int build_digital_input(struct hda_codec *codec)
 	return 0;
 }
 
+=======
+>>>>>>> v3.10.88
 /*
  * auto-mute and auto-mic switching
  * CS421x auto-output redirecting
@@ -895,191 +879,35 @@ static int build_digital_input(struct hda_codec *codec)
 static void cs_automute(struct hda_codec *codec)
 {
 	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	unsigned int hp_present;
-	unsigned int spdif_present;
-	hda_nid_t nid;
-	int i;
 
-	spdif_present = 0;
-	if (cfg->dig_outs) {
-		nid = cfg->dig_out_pins[0];
-		if (is_jack_detectable(codec, nid)) {
-			/*
-			TODO: SPDIF output redirect when SENSE_B is enabled.
-			Shared (SENSE_A) jack (e.g HP/mini-TOSLINK)
-			assumed.
-			*/
-			if (snd_hda_jack_detect(codec, nid)
-				/* && spec->sense_b */)
-				spdif_present = 1;
-		}
-	}
+	/* mute HPs if spdif jack (SENSE_B) is present */
+	spec->gen.master_mute = !!(spec->spdif_present && spec->sense_b);
 
-	hp_present = 0;
-	for (i = 0; i < cfg->hp_outs; i++) {
-		nid = cfg->hp_pins[i];
-		if (!is_jack_detectable(codec, nid))
-			continue;
-		hp_present = snd_hda_jack_detect(codec, nid);
-		if (hp_present)
-			break;
-	}
+	snd_hda_gen_update_outputs(codec);
 
-	/* mute speakers if spdif or hp jack is plugged in */
-	for (i = 0; i < cfg->speaker_outs; i++) {
-		int pin_ctl = hp_present ? 0 : PIN_OUT;
-		/* detect on spdif is specific to CS4210 */
-		if (spdif_present && (spec->vendor_nid == CS4210_VENDOR_NID))
-			pin_ctl = 0;
-
-		nid = cfg->speaker_pins[i];
-		snd_hda_codec_write(codec, nid, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, pin_ctl);
-	}
 	if (spec->gpio_eapd_hp) {
-		unsigned int gpio = hp_present ?
+		spec->gpio_data = spec->gen.hp_jack_present ?
 			spec->gpio_eapd_hp : spec->gpio_eapd_speaker;
 		snd_hda_codec_write(codec, 0x01, 0,
-				    AC_VERB_SET_GPIO_DATA, gpio);
-	}
-
-	/* specific to CS4210 */
-	if (spec->vendor_nid == CS4210_VENDOR_NID) {
-		/* mute HPs if spdif jack (SENSE_B) is present */
-		for (i = 0; i < cfg->hp_outs; i++) {
-			nid = cfg->hp_pins[i];
-			snd_hda_codec_write(codec, nid, 0,
-				AC_VERB_SET_PIN_WIDGET_CONTROL,
-				(spdif_present && spec->sense_b) ? 0 : PIN_HP);
-		}
-
-		/* SPDIF TX on/off */
-		if (cfg->dig_outs) {
-			nid = cfg->dig_out_pins[0];
-			snd_hda_codec_write(codec, nid, 0,
-				AC_VERB_SET_PIN_WIDGET_CONTROL,
-				spdif_present ? PIN_OUT : 0);
-
-		}
-		/* Update board GPIOs if neccessary ... */
+				    AC_VERB_SET_GPIO_DATA, spec->gpio_data);
 	}
 }
 
-/*
- * Auto-input redirect for CS421x
- * Switch max 3 inputs of a single ADC (nid 3)
-*/
-
-static void cs_automic(struct hda_codec *codec)
+static bool is_active_pin(struct hda_codec *codec, hda_nid_t nid)
 {
-	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	hda_nid_t nid;
-	unsigned int present;
-
-	nid = cfg->inputs[spec->automic_idx].pin;
-	present = snd_hda_jack_detect(codec, nid);
-
-	/* specific to CS421x, single ADC */
-	if (spec->vendor_nid == CS420X_VENDOR_NID) {
-		if (present)
-			change_cur_input(codec, spec->automic_idx, 0);
-		else
-			change_cur_input(codec, !spec->automic_idx, 0);
-	} else {
-		if (present) {
-			if (spec->cur_input != spec->automic_idx) {
-				spec->last_input = spec->cur_input;
-				spec->cur_input = spec->automic_idx;
-			}
-		} else  {
-			spec->cur_input = spec->last_input;
-		}
-		cs_update_input_select(codec);
-	}
+	unsigned int val;
+	val = snd_hda_codec_get_pincfg(codec, nid);
+	return (get_defcfg_connect(val) != AC_JACK_PORT_NONE);
 }
 
-/*
- */
-
-static void init_output(struct hda_codec *codec)
+static void init_input_coef(struct hda_codec *codec)
 {
 	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	int i;
-
-	/* mute first */
-	for (i = 0; i < spec->multiout.num_dacs; i++)
-		snd_hda_codec_write(codec, spec->multiout.dac_nids[i], 0,
-				    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE);
-	if (spec->multiout.hp_nid)
-		snd_hda_codec_write(codec, spec->multiout.hp_nid, 0,
-				    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE);
-	for (i = 0; i < ARRAY_SIZE(spec->multiout.extra_out_nid); i++) {
-		if (!spec->multiout.extra_out_nid[i])
-			break;
-		snd_hda_codec_write(codec, spec->multiout.extra_out_nid[i], 0,
-				    AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE);
-	}
-
-	/* set appropriate pin controls */
-	for (i = 0; i < cfg->line_outs; i++)
-		snd_hda_codec_write(codec, cfg->line_out_pins[i], 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
-	/* HP */
-	for (i = 0; i < cfg->hp_outs; i++) {
-		hda_nid_t nid = cfg->hp_pins[i];
-		snd_hda_codec_write(codec, nid, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_HP);
-		if (!cfg->speaker_outs)
-			continue;
-		if (get_wcaps(codec, nid) & AC_WCAP_UNSOL_CAP) {
-			snd_hda_jack_detect_enable(codec, nid, HP_EVENT);
-			spec->hp_detect = 1;
-		}
-	}
-
-	/* Speaker */
-	for (i = 0; i < cfg->speaker_outs; i++)
-		snd_hda_codec_write(codec, cfg->speaker_pins[i], 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT);
-
-	/* SPDIF is enabled on presence detect for CS421x */
-	if (spec->hp_detect || spec->spdif_detect)
-		cs_automute(codec);
-}
-
-static void init_input(struct hda_codec *codec)
-{
-	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
 	unsigned int coef;
-	int i;
 
-	for (i = 0; i < cfg->num_inputs; i++) {
-		unsigned int ctl;
-		hda_nid_t pin = cfg->inputs[i].pin;
-		if (!spec->adc_nid[i])
-			continue;
-		/* set appropriate pin control and mute first */
-		ctl = PIN_IN;
-		if (cfg->inputs[i].type == AUTO_PIN_MIC) {
-			unsigned int caps = snd_hda_query_pin_caps(codec, pin);
-			caps >>= AC_PINCAP_VREF_SHIFT;
-			if (caps & AC_PINCAP_VREF_80)
-				ctl = PIN_VREF80;
-		}
-		snd_hda_codec_write(codec, pin, 0,
-				    AC_VERB_SET_PIN_WIDGET_CONTROL, ctl);
-		snd_hda_codec_write(codec, spec->adc_nid[i], 0,
-				    AC_VERB_SET_AMP_GAIN_MUTE,
-				    AMP_IN_MUTE(spec->adc_idx[i]));
-		if (spec->mic_detect && spec->automic_idx == i)
-			snd_hda_jack_detect_enable(codec, pin, MIC_EVENT);
-	}
 	/* CS420x has multiple ADC, CS421x has single ADC */
 	if (spec->vendor_nid == CS420X_VENDOR_NID) {
+<<<<<<< HEAD
 		change_cur_input(codec, spec->cur_input, 1);
 		if (spec->mic_detect)
 			cs_automic(codec);
@@ -1087,6 +915,8 @@ static void init_input(struct hda_codec *codec)
 		coef = 0x000a; /* ADC1/2 - Digital and Analog Soft Ramp */
 		cs_vendor_coef_set(codec, IDX_ADC_CFG, coef);
 
+=======
+>>>>>>> v3.10.88
 		coef = cs_vendor_coef_get(codec, IDX_BEEP_CFG);
 		if (is_active_pin(codec, CS_DMIC2_PIN_NID))
 			coef |= 1 << 4; /* DMIC2 2 chan on, GPIO1 off */
@@ -1097,6 +927,7 @@ static void init_input(struct hda_codec *codec)
 					*/
 
 		cs_vendor_coef_set(codec, IDX_BEEP_CFG, coef);
+<<<<<<< HEAD
 	} else {
 		if (spec->mic_detect)
 			cs_automic(codec);
@@ -1104,6 +935,8 @@ static void init_input(struct hda_codec *codec)
 			spec->cur_adc = spec->adc_nid[spec->cur_input];
 			cs_update_input_select(codec);
 		}
+=======
+>>>>>>> v3.10.88
 	}
 }
 
@@ -1116,6 +949,9 @@ static const struct hda_verb cs_coef_init_verbs[] = {
 	  | 0x1000 /* Enable DACs High Pass Filter */
 	  | 0x0400 /* Disable Coefficient Auto increment */
 	  )},
+	/* ADC1/2 - Digital and Analog Soft Ramp */
+	{0x11, AC_VERB_SET_COEF_INDEX, IDX_ADC_CFG},
+	{0x11, AC_VERB_SET_PROC_COEF, 0x000a},
 	/* Beep */
 	{0x11, AC_VERB_SET_COEF_INDEX, IDX_BEEP_CFG},
 	{0x11, AC_VERB_SET_PROC_COEF, 0x0007}, /* Enable Beep thru DAC1/2/3 */
@@ -1173,7 +1009,7 @@ static const struct hda_verb cs_errata_init_verbs[] = {
 };
 
 /* SPDIF setup */
-static void init_digital(struct hda_codec *codec)
+static void init_digital_coef(struct hda_codec *codec)
 {
 	unsigned int coef;
 
@@ -1196,6 +1032,8 @@ static int cs_init(struct hda_codec *codec)
 
 	snd_hda_sequence_write(codec, cs_coef_init_verbs);
 
+	snd_hda_gen_init(codec);
+
 	if (spec->gpio_mask) {
 		snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_MASK,
 				    spec->gpio_mask);
@@ -1205,69 +1043,20 @@ static int cs_init(struct hda_codec *codec)
 				    spec->gpio_data);
 	}
 
-	init_output(codec);
-	init_input(codec);
-	init_digital(codec);
-	snd_hda_jack_report_sync(codec);
+	init_input_coef(codec);
+	init_digital_coef(codec);
 
 	return 0;
 }
 
-static int cs_build_controls(struct hda_codec *codec)
-{
-	struct cs_spec *spec = codec->spec;
-	int err;
-
-	err = build_output(codec);
-	if (err < 0)
-		return err;
-	err = build_input(codec);
-	if (err < 0)
-		return err;
-	err = build_digital_output(codec);
-	if (err < 0)
-		return err;
-	err = build_digital_input(codec);
-	if (err < 0)
-		return err;
-	err = cs_init(codec);
-	if (err < 0)
-		return err;
-
-	err = snd_hda_jack_add_kctls(codec, &spec->autocfg);
-	if (err < 0)
-		return err;
-
-	return 0;
-}
-
-static void cs_free(struct hda_codec *codec)
-{
-	struct cs_spec *spec = codec->spec;
-	kfree(spec->capture_bind[0]);
-	kfree(spec->capture_bind[1]);
-	kfree(codec->spec);
-}
-
-static void cs_unsol_event(struct hda_codec *codec, unsigned int res)
-{
-	switch (snd_hda_jack_get_action(codec, res >> 26)) {
-	case HP_EVENT:
-		cs_automute(codec);
-		break;
-	case MIC_EVENT:
-		cs_automic(codec);
-		break;
-	}
-	snd_hda_jack_report_sync(codec);
-}
+#define cs_free		snd_hda_gen_free
 
 static const struct hda_codec_ops cs_patch_ops = {
-	.build_controls = cs_build_controls,
-	.build_pcms = cs_build_pcms,
+	.build_controls = snd_hda_gen_build_controls,
+	.build_pcms = snd_hda_gen_build_pcms,
 	.init = cs_init,
 	.free = cs_free,
-	.unsol_event = cs_unsol_event,
+	.unsol_event = snd_hda_jack_unsol_event,
 };
 
 static int cs_parse_auto_config(struct hda_codec *codec)
@@ -1275,57 +1064,48 @@ static int cs_parse_auto_config(struct hda_codec *codec)
 	struct cs_spec *spec = codec->spec;
 	int err;
 
-	err = snd_hda_parse_pin_def_config(codec, &spec->autocfg, NULL);
+	err = snd_hda_parse_pin_defcfg(codec, &spec->gen.autocfg, NULL, 0);
 	if (err < 0)
 		return err;
 
-	err = parse_output(codec);
+	err = snd_hda_gen_parse_auto_config(codec, &spec->gen.autocfg);
 	if (err < 0)
 		return err;
-	err = parse_input(codec);
-	if (err < 0)
-		return err;
-	err = parse_digital_output(codec);
-	if (err < 0)
-		return err;
-	err = parse_digital_input(codec);
-	if (err < 0)
-		return err;
+
 	return 0;
 }
 
-static const char * const cs420x_models[CS420X_MODELS] = {
-	[CS420X_MBP53] = "mbp53",
-	[CS420X_MBP55] = "mbp55",
-	[CS420X_IMAC27] = "imac27",
-	[CS420X_IMAC27_122] = "imac27_122",
-	[CS420X_APPLE] = "apple",
-	[CS420X_AUTO] = "auto",
+static const struct hda_model_fixup cs420x_models[] = {
+	{ .id = CS420X_MBP53, .name = "mbp53" },
+	{ .id = CS420X_MBP55, .name = "mbp55" },
+	{ .id = CS420X_IMAC27, .name = "imac27" },
+	{ .id = CS420X_IMAC27_122, .name = "imac27_122" },
+	{ .id = CS420X_APPLE, .name = "apple" },
+	{ .id = CS420X_MBP101, .name = "mbp101" },
+	{ .id = CS420X_MBP81, .name = "mbp81" },
+	{ .id = CS420X_MBA42, .name = "mba42" },
+	{}
 };
 
-
-static const struct snd_pci_quirk cs420x_cfg_tbl[] = {
+static const struct snd_pci_quirk cs420x_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x10de, 0x0ac0, "MacBookPro 5,3", CS420X_MBP53),
 	SND_PCI_QUIRK(0x10de, 0x0d94, "MacBookAir 3,1(2)", CS420X_MBP55),
 	SND_PCI_QUIRK(0x10de, 0xcb79, "MacBookPro 5,5", CS420X_MBP55),
 	SND_PCI_QUIRK(0x10de, 0xcb89, "MacBookPro 7,1", CS420X_MBP55),
 	/* this conflicts with too many other models */
 	/*SND_PCI_QUIRK(0x8086, 0x7270, "IMac 27 Inch", CS420X_IMAC27),*/
-	{} /* terminator */
-};
 
-static const struct snd_pci_quirk cs420x_codec_cfg_tbl[] = {
+	/* codec SSID */
+	SND_PCI_QUIRK(0x106b, 0x1c00, "MacBookPro 8,1", CS420X_MBP81),
 	SND_PCI_QUIRK(0x106b, 0x2000, "iMac 12,2", CS420X_IMAC27_122),
+	SND_PCI_QUIRK(0x106b, 0x2800, "MacBookPro 10,1", CS420X_MBP101),
+	SND_PCI_QUIRK(0x106b, 0x5600, "MacBookAir 5,2", CS420X_MBP81),
+	SND_PCI_QUIRK(0x106b, 0x5b00, "MacBookAir 4,2", CS420X_MBA42),
 	SND_PCI_QUIRK_VENDOR(0x106b, "Apple", CS420X_APPLE),
 	{} /* terminator */
 };
 
-struct cs_pincfg {
-	hda_nid_t nid;
-	u32 val;
-};
-
-static const struct cs_pincfg mbp53_pincfgs[] = {
+static const struct hda_pintbl mbp53_pincfgs[] = {
 	{ 0x09, 0x012b4050 },
 	{ 0x0a, 0x90100141 },
 	{ 0x0b, 0x90100140 },
@@ -1339,7 +1119,7 @@ static const struct cs_pincfg mbp53_pincfgs[] = {
 	{} /* terminator */
 };
 
-static const struct cs_pincfg mbp55_pincfgs[] = {
+static const struct hda_pintbl mbp55_pincfgs[] = {
 	{ 0x09, 0x012b4030 },
 	{ 0x0a, 0x90100121 },
 	{ 0x0b, 0x90100120 },
@@ -1353,7 +1133,7 @@ static const struct cs_pincfg mbp55_pincfgs[] = {
 	{} /* terminator */
 };
 
-static const struct cs_pincfg imac27_pincfgs[] = {
+static const struct hda_pintbl imac27_pincfgs[] = {
 	{ 0x09, 0x012b4050 },
 	{ 0x0a, 0x90100140 },
 	{ 0x0b, 0x90100142 },
@@ -1367,20 +1147,115 @@ static const struct cs_pincfg imac27_pincfgs[] = {
 	{} /* terminator */
 };
 
-static const struct cs_pincfg *cs_pincfgs[CS420X_MODELS] = {
-	[CS420X_MBP53] = mbp53_pincfgs,
-	[CS420X_MBP55] = mbp55_pincfgs,
-	[CS420X_IMAC27] = imac27_pincfgs,
+static const struct hda_pintbl mbp101_pincfgs[] = {
+	{ 0x0d, 0x40ab90f0 },
+	{ 0x0e, 0x90a600f0 },
+	{ 0x12, 0x50a600f0 },
+	{} /* terminator */
 };
 
-static void fix_pincfg(struct hda_codec *codec, int model,
-		       const struct cs_pincfg **pin_configs)
+static const struct hda_pintbl mba42_pincfgs[] = {
+	{ 0x09, 0x012b4030 }, /* HP */
+	{ 0x0a, 0x400000f0 },
+	{ 0x0b, 0x90100120 }, /* speaker */
+	{ 0x0c, 0x400000f0 },
+	{ 0x0d, 0x90a00110 }, /* mic */
+	{ 0x0e, 0x400000f0 },
+	{ 0x0f, 0x400000f0 },
+	{ 0x10, 0x400000f0 },
+	{ 0x12, 0x400000f0 },
+	{ 0x15, 0x400000f0 },
+	{} /* terminator */
+};
+
+static void cs420x_fixup_gpio_13(struct hda_codec *codec,
+				 const struct hda_fixup *fix, int action)
 {
-	const struct cs_pincfg *cfg = pin_configs[model];
-	if (!cfg)
-		return;
-	for (; cfg->nid; cfg++)
-		snd_hda_codec_set_pincfg(codec, cfg->nid, cfg->val);
+	if (action == HDA_FIXUP_ACT_PRE_PROBE) {
+		struct cs_spec *spec = codec->spec;
+		spec->gpio_eapd_hp = 2; /* GPIO1 = headphones */
+		spec->gpio_eapd_speaker = 8; /* GPIO3 = speakers */
+		spec->gpio_mask = spec->gpio_dir =
+			spec->gpio_eapd_hp | spec->gpio_eapd_speaker;
+	}
+}
+
+static void cs420x_fixup_gpio_23(struct hda_codec *codec,
+				 const struct hda_fixup *fix, int action)
+{
+	if (action == HDA_FIXUP_ACT_PRE_PROBE) {
+		struct cs_spec *spec = codec->spec;
+		spec->gpio_eapd_hp = 4; /* GPIO2 = headphones */
+		spec->gpio_eapd_speaker = 8; /* GPIO3 = speakers */
+		spec->gpio_mask = spec->gpio_dir =
+			spec->gpio_eapd_hp | spec->gpio_eapd_speaker;
+	}
+}
+
+static const struct hda_fixup cs420x_fixups[] = {
+	[CS420X_MBP53] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = mbp53_pincfgs,
+		.chained = true,
+		.chain_id = CS420X_APPLE,
+	},
+	[CS420X_MBP55] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = mbp55_pincfgs,
+		.chained = true,
+		.chain_id = CS420X_GPIO_13,
+	},
+	[CS420X_IMAC27] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = imac27_pincfgs,
+		.chained = true,
+		.chain_id = CS420X_GPIO_13,
+	},
+	[CS420X_GPIO_13] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = cs420x_fixup_gpio_13,
+	},
+	[CS420X_GPIO_23] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = cs420x_fixup_gpio_23,
+	},
+	[CS420X_MBP101] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = mbp101_pincfgs,
+		.chained = true,
+		.chain_id = CS420X_GPIO_13,
+	},
+	[CS420X_MBP81] = {
+		.type = HDA_FIXUP_VERBS,
+		.v.verbs = (const struct hda_verb[]) {
+			/* internal mic ADC2: right only, single ended */
+			{0x11, AC_VERB_SET_COEF_INDEX, IDX_ADC_CFG},
+			{0x11, AC_VERB_SET_PROC_COEF, 0x102a},
+			{}
+		},
+		.chained = true,
+		.chain_id = CS420X_GPIO_13,
+	},
+	[CS420X_MBA42] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = mba42_pincfgs,
+		.chained = true,
+		.chain_id = CS420X_GPIO_13,
+	},
+};
+
+static struct cs_spec *cs_alloc_spec(struct hda_codec *codec, int vendor_nid)
+{
+	struct cs_spec *spec;
+
+	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	if (!spec)
+		return NULL;
+	codec->spec = spec;
+	spec->vendor_nid = vendor_nid;
+	snd_hda_gen_spec_init(&spec->gen);
+
+	return spec;
 }
 
 static int patch_cs420x(struct hda_codec *codec)
@@ -1388,40 +1263,16 @@ static int patch_cs420x(struct hda_codec *codec)
 	struct cs_spec *spec;
 	int err;
 
-	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	spec = cs_alloc_spec(codec, CS420X_VENDOR_NID);
 	if (!spec)
 		return -ENOMEM;
-	codec->spec = spec;
 
-	spec->vendor_nid = CS420X_VENDOR_NID;
+	spec->gen.automute_hook = cs_automute;
+	codec->single_adc_amp = 1;
 
-	spec->board_config =
-		snd_hda_check_board_config(codec, CS420X_MODELS,
-					   cs420x_models, cs420x_cfg_tbl);
-	if (spec->board_config < 0)
-		spec->board_config =
-			snd_hda_check_board_codec_sid_config(codec,
-				CS420X_MODELS, NULL, cs420x_codec_cfg_tbl);
-	if (spec->board_config >= 0)
-		fix_pincfg(codec, spec->board_config, cs_pincfgs);
-
-	switch (spec->board_config) {
-	case CS420X_IMAC27:
-	case CS420X_MBP53:
-	case CS420X_MBP55:
-	case CS420X_APPLE:
-		spec->gpio_eapd_hp = 2; /* GPIO1 = headphones */
-		spec->gpio_eapd_speaker = 8; /* GPIO3 = speakers */
-		spec->gpio_mask = spec->gpio_dir =
-			spec->gpio_eapd_hp | spec->gpio_eapd_speaker;
-		break;
-	case CS420X_IMAC27_122:
-		spec->gpio_eapd_hp = 4; /* GPIO2 = headphones */
-		spec->gpio_eapd_speaker = 8; /* GPIO3 = speakers */
-		spec->gpio_mask = spec->gpio_dir =
-			spec->gpio_eapd_hp | spec->gpio_eapd_speaker;
-		break;
-	}
+	snd_hda_pick_fixup(codec, cs420x_models, cs420x_fixup_tbl,
+			   cs420x_fixups);
+	snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_PRE_PROBE);
 
 	err = cs_parse_auto_config(codec);
 	if (err < 0)
@@ -1429,11 +1280,16 @@ static int patch_cs420x(struct hda_codec *codec)
 
 	codec->patch_ops = cs_patch_ops;
 
+	snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_PROBE);
+
 	return 0;
 
  error:
 	cs_free(codec);
+<<<<<<< HEAD
 	codec->spec = NULL;
+=======
+>>>>>>> v3.10.88
 	return err;
 }
 
@@ -1446,11 +1302,13 @@ static int patch_cs420x(struct hda_codec *codec)
 */
 
 /* CS4210 board names */
-static const char *cs421x_models[CS421X_MODELS] = {
-	[CS421X_CDB4210] = "cdb4210",
+static const struct hda_model_fixup cs421x_models[] = {
+	{ .id = CS421X_CDB4210, .name = "cdb4210" },
+	{ .id = CS421X_STUMPY, .name = "stumpy" },
+	{}
 };
 
-static const struct snd_pci_quirk cs421x_cfg_tbl[] = {
+static const struct snd_pci_quirk cs421x_fixup_tbl[] = {
 	/* Test Intel board + CDB2410  */
 	SND_PCI_QUIRK(0x8086, 0x5001, "DP45SG/CDB4210", CS421X_CDB4210),
 	{} /* terminator */
@@ -1458,7 +1316,7 @@ static const struct snd_pci_quirk cs421x_cfg_tbl[] = {
 
 /* CS4210 board pinconfigs */
 /* Default CS4210 (CDB4210)*/
-static const struct cs_pincfg cdb4210_pincfgs[] = {
+static const struct hda_pintbl cdb4210_pincfgs[] = {
 	{ 0x05, 0x0321401f },
 	{ 0x06, 0x90170010 },
 	{ 0x07, 0x03813031 },
@@ -1468,8 +1326,41 @@ static const struct cs_pincfg cdb4210_pincfgs[] = {
 	{} /* terminator */
 };
 
-static const struct cs_pincfg *cs421x_pincfgs[CS421X_MODELS] = {
-	[CS421X_CDB4210] = cdb4210_pincfgs,
+/* Stumpy ChromeBox */
+static const struct hda_pintbl stumpy_pincfgs[] = {
+	{ 0x05, 0x022120f0 },
+	{ 0x06, 0x901700f0 },
+	{ 0x07, 0x02a120f0 },
+	{ 0x08, 0x77a70037 },
+	{ 0x09, 0x77a6003e },
+	{ 0x0a, 0x434510f0 },
+	{} /* terminator */
+};
+
+/* Setup GPIO/SENSE for each board (if used) */
+static void cs421x_fixup_sense_b(struct hda_codec *codec,
+				 const struct hda_fixup *fix, int action)
+{
+	struct cs_spec *spec = codec->spec;
+	if (action == HDA_FIXUP_ACT_PRE_PROBE)
+		spec->sense_b = 1;
+}
+
+static const struct hda_fixup cs421x_fixups[] = {
+	[CS421X_CDB4210] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = cdb4210_pincfgs,
+		.chained = true,
+		.chain_id = CS421X_SENSE_B,
+	},
+	[CS421X_SENSE_B] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = cs421x_fixup_sense_b,
+	},
+	[CS421X_STUMPY] = {
+		.type = HDA_FIXUP_PINS,
+		.v.pins = stumpy_pincfgs,
+	},
 };
 
 static const struct hda_verb cs421x_coef_init_verbs[] = {
@@ -1573,7 +1464,7 @@ static int cs421x_boost_vol_put(struct snd_kcontrol *kcontrol,
 	}
 }
 
-static const struct snd_kcontrol_new cs421x_speaker_bost_ctl = {
+static const struct snd_kcontrol_new cs421x_speaker_boost_ctl = {
 
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access = (SNDRV_CTL_ELEM_ACCESS_READWRITE |
@@ -1618,20 +1509,42 @@ static void cs4210_pinmux_init(struct hda_codec *codec)
 	}
 }
 
-static void init_cs421x_digital(struct hda_codec *codec)
+static void cs4210_spdif_automute(struct hda_codec *codec,
+				  struct hda_jack_tbl *tbl)
 {
 	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	int i;
+	bool spdif_present = false;
+	hda_nid_t spdif_pin = spec->gen.autocfg.dig_out_pins[0];
 
+	/* detect on spdif is specific to CS4210 */
+	if (!spec->spdif_detect ||
+	    spec->vendor_nid != CS4210_VENDOR_NID)
+		return;
+
+	spdif_present = snd_hda_jack_detect(codec, spdif_pin);
+	if (spdif_present == spec->spdif_present)
+		return;
+
+	spec->spdif_present = spdif_present;
+	/* SPDIF TX on/off */
+	snd_hda_set_pin_ctl(codec, spdif_pin, spdif_present ? PIN_OUT : 0);
+
+	cs_automute(codec);
+}
+
+static void parse_cs421x_digital(struct hda_codec *codec)
+{
+	struct cs_spec *spec = codec->spec;
+	struct auto_pin_cfg *cfg = &spec->gen.autocfg;
+	int i;
 
 	for (i = 0; i < cfg->dig_outs; i++) {
 		hda_nid_t nid = cfg->dig_out_pins[i];
-		if (!cfg->speaker_outs)
-			continue;
 		if (get_wcaps(codec, nid) & AC_WCAP_UNSOL_CAP) {
-			snd_hda_jack_detect_enable(codec, nid, SPDIF_EVENT);
 			spec->spdif_detect = 1;
+			snd_hda_jack_detect_enable_callback(codec, nid,
+							    SPDIF_EVENT,
+							    cs4210_spdif_automute);
 		}
 	}
 }
@@ -1646,6 +1559,8 @@ static int cs421x_init(struct hda_codec *codec)
 		cs4210_pinmux_init(codec);
 	}
 
+	snd_hda_gen_init(codec);
+
 	if (spec->gpio_mask) {
 		snd_hda_codec_write(codec, 0x01, 0, AC_VERB_SET_GPIO_MASK,
 				    spec->gpio_mask);
@@ -1655,170 +1570,11 @@ static int cs421x_init(struct hda_codec *codec)
 				    spec->gpio_data);
 	}
 
-	init_output(codec);
-	init_input(codec);
-	init_cs421x_digital(codec);
-	snd_hda_jack_report_sync(codec);
+	init_input_coef(codec);
+
+	cs4210_spdif_automute(codec, NULL);
 
 	return 0;
-}
-
-/*
- * CS4210 Input MUX (1 ADC)
- */
-static int cs421x_mux_enum_info(struct snd_kcontrol *kcontrol,
-					struct snd_ctl_elem_info *uinfo)
-{
-	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct cs_spec *spec = codec->spec;
-
-	return snd_hda_input_mux_info(&spec->input_mux, uinfo);
-}
-
-static int cs421x_mux_enum_get(struct snd_kcontrol *kcontrol,
-					struct snd_ctl_elem_value *ucontrol)
-{
-	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct cs_spec *spec = codec->spec;
-
-	ucontrol->value.enumerated.item[0] = spec->cur_input;
-	return 0;
-}
-
-static int cs421x_mux_enum_put(struct snd_kcontrol *kcontrol,
-					struct snd_ctl_elem_value *ucontrol)
-{
-	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct cs_spec *spec = codec->spec;
-
-	return snd_hda_input_mux_put(codec, &spec->input_mux, ucontrol,
-				spec->adc_nid[0], &spec->cur_input);
-
-}
-
-static struct snd_kcontrol_new cs421x_capture_source = {
-
-	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-	.name = "Capture Source",
-	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
-	.info = cs421x_mux_enum_info,
-	.get = cs421x_mux_enum_get,
-	.put = cs421x_mux_enum_put,
-};
-
-static int cs421x_add_input_volume_control(struct hda_codec *codec, int item)
-{
-	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	const struct hda_input_mux *imux = &spec->input_mux;
-	hda_nid_t pin = cfg->inputs[item].pin;
-	struct snd_kcontrol *kctl;
-	u32 caps;
-
-	if (!(get_wcaps(codec, pin) & AC_WCAP_IN_AMP))
-		return 0;
-
-	caps = query_amp_caps(codec, pin, HDA_INPUT);
-	caps = (caps & AC_AMPCAP_NUM_STEPS) >> AC_AMPCAP_NUM_STEPS_SHIFT;
-	if (caps <= 1)
-		return 0;
-
-	return add_volume(codec,  imux->items[item].label, 0,
-			  HDA_COMPOSE_AMP_VAL(pin, 3, 0, HDA_INPUT), 1, &kctl);
-}
-
-/* add a (input-boost) volume control to the given input pin */
-static int build_cs421x_input(struct hda_codec *codec)
-{
-	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	struct hda_input_mux *imux = &spec->input_mux;
-	int i, err, type_idx;
-	const char *label;
-
-	if (!spec->num_inputs)
-		return 0;
-
-	/* make bind-capture */
-	spec->capture_bind[0] = make_bind_capture(codec, &snd_hda_bind_sw);
-	spec->capture_bind[1] = make_bind_capture(codec, &snd_hda_bind_vol);
-	for (i = 0; i < 2; i++) {
-		struct snd_kcontrol *kctl;
-		int n;
-		if (!spec->capture_bind[i])
-			return -ENOMEM;
-		kctl = snd_ctl_new1(&cs_capture_ctls[i], codec);
-		if (!kctl)
-			return -ENOMEM;
-		kctl->private_value = (long)spec->capture_bind[i];
-		err = snd_hda_ctl_add(codec, 0, kctl);
-		if (err < 0)
-			return err;
-		for (n = 0; n < AUTO_PIN_LAST; n++) {
-			if (!spec->adc_nid[n])
-				continue;
-			err = snd_hda_add_nid(codec, kctl, 0, spec->adc_nid[n]);
-			if (err < 0)
-				return err;
-		}
-	}
-
-	/* Add Input MUX Items + Capture Volume/Switch */
-	for (i = 0; i < spec->num_inputs; i++) {
-		label = hda_get_autocfg_input_label(codec, cfg, i);
-		snd_hda_add_imux_item(imux, label, spec->adc_idx[i], &type_idx);
-
-		err = cs421x_add_input_volume_control(codec, i);
-		if (err < 0)
-			return err;
-	}
-
-	/*
-	    Add 'Capture Source' Switch if
-		* 2 inputs and no mic detec
-		* 3 inputs
-	*/
-	if ((spec->num_inputs == 2 && !spec->mic_detect) ||
-	    (spec->num_inputs == 3)) {
-
-		err = snd_hda_ctl_add(codec, spec->adc_nid[0],
-			      snd_ctl_new1(&cs421x_capture_source, codec));
-		if (err < 0)
-			return err;
-	}
-
-	return 0;
-}
-
-/* Single DAC (Mute/Gain) */
-static int build_cs421x_output(struct hda_codec *codec)
-{
-	hda_nid_t dac = CS4210_DAC_NID;
-	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	struct snd_kcontrol *kctl;
-	int err;
-	char *name = "Master";
-
-	fix_volume_caps(codec, dac);
-
-	err = add_mute(codec, name, 0,
-			HDA_COMPOSE_AMP_VAL(dac, 3, 0, HDA_OUTPUT), 0, &kctl);
-	if (err < 0)
-		return err;
-
-	err = add_volume(codec, name, 0,
-			HDA_COMPOSE_AMP_VAL(dac, 3, 0, HDA_OUTPUT), 0, &kctl);
-	if (err < 0)
-		return err;
-
-	if (cfg->speaker_outs && (spec->vendor_nid == CS4210_VENDOR_NID)) {
-		err = snd_hda_ctl_add(codec, 0,
-			snd_ctl_new1(&cs421x_speaker_bost_ctl, codec));
-		if (err < 0)
-			return err;
-	}
-	return err;
 }
 
 static int cs421x_build_controls(struct hda_codec *codec)
@@ -1826,79 +1582,49 @@ static int cs421x_build_controls(struct hda_codec *codec)
 	struct cs_spec *spec = codec->spec;
 	int err;
 
-	err = build_cs421x_output(codec);
-	if (err < 0)
-		return err;
-	err = build_cs421x_input(codec);
-	if (err < 0)
-		return err;
-	err = build_digital_output(codec);
-	if (err < 0)
-		return err;
-	err =  cs421x_init(codec);
+	err = snd_hda_gen_build_controls(codec);
 	if (err < 0)
 		return err;
 
-	err = snd_hda_jack_add_kctls(codec, &spec->autocfg);
-	if (err < 0)
-		return err;
-
+	if (spec->gen.autocfg.speaker_outs &&
+	    spec->vendor_nid == CS4210_VENDOR_NID) {
+		err = snd_hda_ctl_add(codec, 0,
+			snd_ctl_new1(&cs421x_speaker_boost_ctl, codec));
+		if (err < 0)
+			return err;
+	}
 	return 0;
 }
 
-static void cs421x_unsol_event(struct hda_codec *codec, unsigned int res)
+static void fix_volume_caps(struct hda_codec *codec, hda_nid_t dac)
 {
-	switch (snd_hda_jack_get_action(codec, res >> 26)) {
-	case HP_EVENT:
-	case SPDIF_EVENT:
-		cs_automute(codec);
-		break;
+	unsigned int caps;
 
-	case MIC_EVENT:
-		cs_automic(codec);
-		break;
-	}
-	snd_hda_jack_report_sync(codec);
-}
-
-static int parse_cs421x_input(struct hda_codec *codec)
-{
-	struct cs_spec *spec = codec->spec;
-	struct auto_pin_cfg *cfg = &spec->autocfg;
-	int i;
-
-	for (i = 0; i < cfg->num_inputs; i++) {
-		hda_nid_t pin = cfg->inputs[i].pin;
-		spec->adc_nid[i] = get_adc(codec, pin, &spec->adc_idx[i]);
-		spec->cur_input = spec->last_input = i;
-		spec->num_inputs++;
-
-		/* check whether the automatic mic switch is available */
-		if (is_ext_mic(codec, i) && cfg->num_inputs >= 2) {
-			spec->mic_detect = 1;
-			spec->automic_idx = i;
-		}
-	}
-	return 0;
+	/* set the upper-limit for mixer amp to 0dB */
+	caps = query_amp_caps(codec, dac, HDA_OUTPUT);
+	caps &= ~(0x7f << AC_AMPCAP_NUM_STEPS_SHIFT);
+	caps |= ((caps >> AC_AMPCAP_OFFSET_SHIFT) & 0x7f)
+		<< AC_AMPCAP_NUM_STEPS_SHIFT;
+	snd_hda_override_amp_caps(codec, dac, HDA_OUTPUT, caps);
 }
 
 static int cs421x_parse_auto_config(struct hda_codec *codec)
 {
 	struct cs_spec *spec = codec->spec;
+	hda_nid_t dac = CS4210_DAC_NID;
 	int err;
 
-	err = snd_hda_parse_pin_def_config(codec, &spec->autocfg, NULL);
+	fix_volume_caps(codec, dac);
+
+	err = snd_hda_parse_pin_defcfg(codec, &spec->gen.autocfg, NULL, 0);
 	if (err < 0)
 		return err;
-	err = parse_output(codec);
+
+	err = snd_hda_gen_parse_auto_config(codec, &spec->gen.autocfg);
 	if (err < 0)
 		return err;
-	err = parse_cs421x_input(codec);
-	if (err < 0)
-		return err;
-	err = parse_digital_output(codec);
-	if (err < 0)
-		return err;
+
+	parse_cs421x_digital(codec);
 	return 0;
 }
 
@@ -1907,7 +1633,7 @@ static int cs421x_parse_auto_config(struct hda_codec *codec)
 	Manage PDREF, when transitioning to D3hot
 	(DAC,ADC) -> D3, PDREF=1, AFG->D3
 */
-static int cs421x_suspend(struct hda_codec *codec, pm_message_t state)
+static int cs421x_suspend(struct hda_codec *codec)
 {
 	struct cs_spec *spec = codec->spec;
 	unsigned int coef;
@@ -1929,12 +1655,12 @@ static int cs421x_suspend(struct hda_codec *codec, pm_message_t state)
 }
 #endif
 
-static struct hda_codec_ops cs421x_patch_ops = {
+static const struct hda_codec_ops cs421x_patch_ops = {
 	.build_controls = cs421x_build_controls,
-	.build_pcms = cs_build_pcms,
+	.build_pcms = snd_hda_gen_build_pcms,
 	.init = cs421x_init,
 	.free = cs_free,
-	.unsol_event = cs421x_unsol_event,
+	.unsol_event = snd_hda_jack_unsol_event,
 #ifdef CONFIG_PM
 	.suspend = cs421x_suspend,
 #endif
@@ -1945,33 +1671,15 @@ static int patch_cs4210(struct hda_codec *codec)
 	struct cs_spec *spec;
 	int err;
 
-	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	spec = cs_alloc_spec(codec, CS4210_VENDOR_NID);
 	if (!spec)
 		return -ENOMEM;
-	codec->spec = spec;
 
-	spec->vendor_nid = CS4210_VENDOR_NID;
+	spec->gen.automute_hook = cs_automute;
 
-	spec->board_config =
-		snd_hda_check_board_config(codec, CS421X_MODELS,
-					   cs421x_models, cs421x_cfg_tbl);
-	if (spec->board_config >= 0)
-		fix_pincfg(codec, spec->board_config, cs421x_pincfgs);
-	/*
-	    Setup GPIO/SENSE for each board (if used)
-	*/
-	switch (spec->board_config) {
-	case CS421X_CDB4210:
-		snd_printd("CS4210 board: %s\n",
-			cs421x_models[spec->board_config]);
-/*		spec->gpio_mask = 3;
-		spec->gpio_dir = 3;
-		spec->gpio_data = 3;
-*/
-		spec->sense_b = 1;
-
-		break;
-	}
+	snd_hda_pick_fixup(codec, cs421x_models, cs421x_fixup_tbl,
+			   cs421x_fixups);
+	snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_PRE_PROBE);
 
 	/*
 	    Update the GPIO/DMIC/SENSE_B pinmux before the configuration
@@ -1986,11 +1694,16 @@ static int patch_cs4210(struct hda_codec *codec)
 
 	codec->patch_ops = cs421x_patch_ops;
 
+	snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_PROBE);
+
 	return 0;
 
  error:
 	cs_free(codec);
+<<<<<<< HEAD
 	codec->spec = NULL;
+=======
+>>>>>>> v3.10.88
 	return err;
 }
 
@@ -1999,12 +1712,9 @@ static int patch_cs4213(struct hda_codec *codec)
 	struct cs_spec *spec;
 	int err;
 
-	spec = kzalloc(sizeof(*spec), GFP_KERNEL);
+	spec = cs_alloc_spec(codec, CS4213_VENDOR_NID);
 	if (!spec)
 		return -ENOMEM;
-	codec->spec = spec;
-
-	spec->vendor_nid = CS4213_VENDOR_NID;
 
 	err = cs421x_parse_auto_config(codec);
 	if (err < 0)
@@ -2015,7 +1725,10 @@ static int patch_cs4213(struct hda_codec *codec)
 
  error:
 	cs_free(codec);
+<<<<<<< HEAD
 	codec->spec = NULL;
+=======
+>>>>>>> v3.10.88
 	return err;
 }
 

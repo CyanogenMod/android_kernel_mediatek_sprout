@@ -29,7 +29,7 @@
 #define DRV_MODULE_VERSION	"1.0"
 #define DRV_MODULE_RELDATE	"Jul 11, 2007"
 
-static char version[] __devinitdata =
+static char version[] =
 	DRV_MODULE_NAME ".c:v" DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
 MODULE_AUTHOR("David S. Miller (davem@davemloft.net)");
 MODULE_DESCRIPTION("Sun LDOM domain services driver");
@@ -842,8 +842,8 @@ void ldom_reboot(const char *boot_command)
 	if (boot_command && strlen(boot_command)) {
 		unsigned long len;
 
-		strcpy(full_boot_str, "boot ");
-		strcpy(full_boot_str + strlen("boot "), boot_command);
+		snprintf(full_boot_str, sizeof(full_boot_str), "boot %s",
+			 boot_command);
 		len = strlen(full_boot_str);
 
 		if (reboot_data_supported) {
@@ -868,7 +868,7 @@ void ldom_power_off(void)
 
 static void ds_conn_reset(struct ds_info *dp)
 {
-	printk(KERN_ERR "ds-%llu: ds_conn_reset() from %p\n",
+	printk(KERN_ERR "ds-%llu: ds_conn_reset() from %pf\n",
 	       dp->id, __builtin_return_address(0));
 }
 
@@ -1146,8 +1146,7 @@ static void ds_event(void *arg, int event)
 	spin_unlock_irqrestore(&ds_lock, flags);
 }
 
-static int __devinit ds_probe(struct vio_dev *vdev,
-			      const struct vio_device_id *id)
+static int ds_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 {
 	static int ds_version_printed;
 	struct ldc_channel_config ds_cfg = {

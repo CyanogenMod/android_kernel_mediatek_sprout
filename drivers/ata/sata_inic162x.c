@@ -285,12 +285,10 @@ static void inic_reset_port(void __iomem *port_base)
 static int inic_scr_read(struct ata_link *link, unsigned sc_reg, u32 *val)
 {
 	void __iomem *scr_addr = inic_port_base(link->ap) + PORT_SCR;
-	void __iomem *addr;
 
 	if (unlikely(sc_reg >= ARRAY_SIZE(scr_map)))
 		return -EINVAL;
 
-	addr = scr_addr + scr_map[sc_reg] * 4;
 	*val = readl(scr_addr + scr_map[sc_reg] * 4);
 
 	/* this controller has stuck DIAG.N, ignore it */
@@ -908,21 +906,10 @@ static struct pci_driver inic_pci_driver = {
 	.remove		= ata_pci_remove_one,
 };
 
-static int __init inic_init(void)
-{
-	return pci_register_driver(&inic_pci_driver);
-}
-
-static void __exit inic_exit(void)
-{
-	pci_unregister_driver(&inic_pci_driver);
-}
+module_pci_driver(inic_pci_driver);
 
 MODULE_AUTHOR("Tejun Heo");
 MODULE_DESCRIPTION("low-level driver for Initio 162x SATA");
 MODULE_LICENSE("GPL v2");
 MODULE_DEVICE_TABLE(pci, inic_pci_tbl);
 MODULE_VERSION(DRV_VERSION);
-
-module_init(inic_init);
-module_exit(inic_exit);

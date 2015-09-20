@@ -9,6 +9,10 @@
 /*
  * Handle hardware traps and faults.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
+#include <linux/context_tracking.h>
 #include <linux/interrupt.h>
 #include <linux/kallsyms.h>
 #include <linux/spinlock.h>
@@ -37,10 +41,6 @@
 #include <linux/eisa.h>
 #endif
 
-#ifdef CONFIG_MCA
-#include <linux/mca.h>
-#endif
-
 #if defined(CONFIG_EDAC)
 #include <linux/edac.h>
 #endif
@@ -50,12 +50,13 @@
 #include <asm/processor.h>
 #include <asm/debugreg.h>
 #include <linux/atomic.h>
+#include <asm/ftrace.h>
 #include <asm/traps.h>
 #include <asm/desc.h>
 #include <asm/i387.h>
 #include <asm/fpu-internal.h>
 #include <asm/mce.h>
-
+#include <asm/fixmap.h>
 #include <asm/mach_traps.h>
 
 #ifdef CONFIG_X86_64
@@ -67,9 +68,6 @@
 #include <asm/setup.h>
 
 asmlinkage int system_call(void);
-
-/* Do we ignore FPU interrupts ? */
-char ignore_fpu_irq;
 
 /*
  * The IDT has to be page-aligned to simplify the Pentium
@@ -107,30 +105,45 @@ static inline void preempt_conditional_cli(struct pt_regs *regs)
 	dec_preempt_count();
 }
 
+static int __kprobes
+do_trap_no_signal(struct task_struct *tsk, int trapnr, char *str,
+		  struct pt_regs *regs,	long error_code)
+{
+#ifdef CONFIG_X86_32
+	if (regs->flags & X86_VM_MASK) {
+		/*
+		 * Traps 0, 1, 3, 4, and 5 should be forwarded to vm86.
+		 * On nmi (interrupt 2), do_trap should not be called.
+		 */
+		if (trapnr < X86_TRAP_UD) {
+			if (!handle_vm86_trap((struct kernel_vm86_regs *) regs,
+						error_code, trapnr))
+				return 0;
+		}
+		return -1;
+	}
+#endif
+	if (!user_mode(regs)) {
+		if (!fixup_exception(regs)) {
+			tsk->thread.error_code = error_code;
+			tsk->thread.trap_nr = trapnr;
+			die(str, regs, error_code);
+		}
+		return 0;
+	}
+
+	return -1;
+}
+
 static void __kprobes
 do_trap(int trapnr, int signr, char *str, struct pt_regs *regs,
 	long error_code, siginfo_t *info)
 {
 	struct task_struct *tsk = current;
 
-#ifdef CONFIG_X86_32
-	if (regs->flags & X86_VM_MASK) {
-		/*
-		 * traps 0, 1, 3, 4, and 5 should be forwarded to vm86.
-		 * On nmi (interrupt 2), do_trap should not be called.
-		 */
-		if (trapnr < X86_TRAP_UD)
-			goto vm86_trap;
-		goto trap_signal;
-	}
-#endif
 
-	if (!user_mode(regs))
-		goto kernel_trap;
-
-#ifdef CONFIG_X86_32
-trap_signal:
-#endif
+	if (!do_trap_no_signal(tsk, trapnr, str, regs, error_code))
+		return;
 	/*
 	 * We want error_code and trap_nr set for userspace faults and
 	 * kernelspace faults which result in die(), but not
@@ -146,12 +159,11 @@ trap_signal:
 #ifdef CONFIG_X86_64
 	if (show_unhandled_signals && unhandled_signal(tsk, signr) &&
 	    printk_ratelimit()) {
-		printk(KERN_INFO
-		       "%s[%d] trap %s ip:%lx sp:%lx error:%lx",
-		       tsk->comm, tsk->pid, str,
-		       regs->ip, regs->sp, error_code);
+		pr_info("%s[%d] trap %s ip:%lx sp:%lx error:%lx",
+			tsk->comm, tsk->pid, str,
+			regs->ip, regs->sp, error_code);
 		print_vma_addr(" in ", regs->ip);
-		printk("\n");
+		pr_cont("\n");
 	}
 #endif
 
@@ -159,48 +171,43 @@ trap_signal:
 		force_sig_info(signr, info, tsk);
 	else
 		force_sig(signr, tsk);
-	return;
-
-kernel_trap:
-	if (!fixup_exception(regs)) {
-		tsk->thread.error_code = error_code;
-		tsk->thread.trap_nr = trapnr;
-		die(str, regs, error_code);
-	}
-	return;
-
-#ifdef CONFIG_X86_32
-vm86_trap:
-	if (handle_vm86_trap((struct kernel_vm86_regs *) regs,
-						error_code, trapnr))
-		goto trap_signal;
-	return;
-#endif
 }
 
 #define DO_ERROR(trapnr, signr, str, name)				\
 dotraplinkage void do_##name(struct pt_regs *regs, long error_code)	\
 {									\
-	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr)	\
-							== NOTIFY_STOP)	\
+	enum ctx_state prev_state;					\
+									\
+	prev_state = exception_enter();					\
+	if (notify_die(DIE_TRAP, str, regs, error_code,			\
+			trapnr, signr) == NOTIFY_STOP) {		\
+		exception_exit(prev_state);				\
 		return;							\
+	}								\
 	conditional_sti(regs);						\
 	do_trap(trapnr, signr, str, regs, error_code, NULL);		\
+	exception_exit(prev_state);					\
 }
 
 #define DO_ERROR_INFO(trapnr, signr, str, name, sicode, siaddr)		\
 dotraplinkage void do_##name(struct pt_regs *regs, long error_code)	\
 {									\
 	siginfo_t info;							\
+	enum ctx_state prev_state;					\
+									\
 	info.si_signo = signr;						\
 	info.si_errno = 0;						\
 	info.si_code = sicode;						\
 	info.si_addr = (void __user *)siaddr;				\
-	if (notify_die(DIE_TRAP, str, regs, error_code, trapnr, signr)	\
-							== NOTIFY_STOP)	\
+	prev_state = exception_enter();					\
+	if (notify_die(DIE_TRAP, str, regs, error_code,			\
+			trapnr, signr) == NOTIFY_STOP) {		\
+		exception_exit(prev_state);				\
 		return;							\
+	}								\
 	conditional_sti(regs);						\
 	do_trap(trapnr, signr, str, regs, error_code, &info);		\
+	exception_exit(prev_state);					\
 }
 
 DO_ERROR_INFO(X86_TRAP_DE, SIGFPE, "divide error", divide_error, FPE_INTDIV,
@@ -213,29 +220,42 @@ DO_ERROR(X86_TRAP_OLD_MF, SIGFPE, "coprocessor segment overrun",
 		coprocessor_segment_overrun)
 DO_ERROR(X86_TRAP_TS, SIGSEGV, "invalid TSS", invalid_TSS)
 DO_ERROR(X86_TRAP_NP, SIGBUS, "segment not present", segment_not_present)
-#ifdef CONFIG_X86_32
 DO_ERROR(X86_TRAP_SS, SIGBUS, "stack segment", stack_segment)
-#endif
 DO_ERROR_INFO(X86_TRAP_AC, SIGBUS, "alignment check", alignment_check,
 		BUS_ADRALN, 0)
 
 #ifdef CONFIG_X86_64
 /* Runs on IST stack */
-dotraplinkage void do_stack_segment(struct pt_regs *regs, long error_code)
-{
-	if (notify_die(DIE_TRAP, "stack segment", regs, error_code,
-			X86_TRAP_SS, SIGBUS) == NOTIFY_STOP)
-		return;
-	preempt_conditional_sti(regs);
-	do_trap(X86_TRAP_SS, SIGBUS, "stack segment", regs, error_code, NULL);
-	preempt_conditional_cli(regs);
-}
-
 dotraplinkage void do_double_fault(struct pt_regs *regs, long error_code)
 {
 	static const char str[] = "double fault";
 	struct task_struct *tsk = current;
 
+#ifdef CONFIG_X86_ESPFIX64
+	extern unsigned char native_irq_return_iret[];
+
+	/*
+	 * If IRET takes a non-IST fault on the espfix64 stack, then we
+	 * end up promoting it to a doublefault.  In that case, modify
+	 * the stack to make it look like we just entered the #GP
+	 * handler from user space, similar to bad_iret.
+	 */
+	if (((long)regs->sp >> PGDIR_SHIFT) == ESPFIX_PGD_ENTRY &&
+		regs->cs == __KERNEL_CS &&
+		regs->ip == (unsigned long)native_irq_return_iret)
+	{
+		struct pt_regs *normal_regs = task_pt_regs(current);
+
+		/* Fake a #GP(0) from userspace. */
+		memmove(&normal_regs->ip, (void *)regs->sp, 5*8);
+		normal_regs->orig_ax = 0;  /* Missing (lost) #GP error code */
+		regs->ip = (unsigned long)general_protection;
+		regs->sp = (unsigned long)&normal_regs->orig_ax;
+		return;
+	}
+#endif
+
+	exception_enter();
 	/* Return not checked because double check cannot be ignored */
 	notify_die(DIE_TRAP, str, regs, error_code, X86_TRAP_DF, SIGSEGV);
 
@@ -255,65 +275,73 @@ dotraplinkage void __kprobes
 do_general_protection(struct pt_regs *regs, long error_code)
 {
 	struct task_struct *tsk;
+	enum ctx_state prev_state;
 
+	prev_state = exception_enter();
 	conditional_sti(regs);
 
 #ifdef CONFIG_X86_32
-	if (regs->flags & X86_VM_MASK)
-		goto gp_in_vm86;
+	if (regs->flags & X86_VM_MASK) {
+		local_irq_enable();
+		handle_vm86_fault((struct kernel_vm86_regs *) regs, error_code);
+		goto exit;
+	}
 #endif
 
 	tsk = current;
-	if (!user_mode(regs))
-		goto gp_in_kernel;
+	if (!user_mode(regs)) {
+		if (fixup_exception(regs))
+			goto exit;
+
+		tsk->thread.error_code = error_code;
+		tsk->thread.trap_nr = X86_TRAP_GP;
+		if (notify_die(DIE_GPF, "general protection fault", regs, error_code,
+			       X86_TRAP_GP, SIGSEGV) != NOTIFY_STOP)
+			die("general protection fault", regs, error_code);
+		goto exit;
+	}
 
 	tsk->thread.error_code = error_code;
 	tsk->thread.trap_nr = X86_TRAP_GP;
 
 	if (show_unhandled_signals && unhandled_signal(tsk, SIGSEGV) &&
 			printk_ratelimit()) {
-		printk(KERN_INFO
-			"%s[%d] general protection ip:%lx sp:%lx error:%lx",
+		pr_info("%s[%d] general protection ip:%lx sp:%lx error:%lx",
 			tsk->comm, task_pid_nr(tsk),
 			regs->ip, regs->sp, error_code);
 		print_vma_addr(" in ", regs->ip);
-		printk("\n");
+		pr_cont("\n");
 	}
 
 	force_sig(SIGSEGV, tsk);
-	return;
-
-#ifdef CONFIG_X86_32
-gp_in_vm86:
-	local_irq_enable();
-	handle_vm86_fault((struct kernel_vm86_regs *) regs, error_code);
-	return;
-#endif
-
-gp_in_kernel:
-	if (fixup_exception(regs))
-		return;
-
-	tsk->thread.error_code = error_code;
-	tsk->thread.trap_nr = X86_TRAP_GP;
-	if (notify_die(DIE_GPF, "general protection fault", regs, error_code,
-			X86_TRAP_GP, SIGSEGV) == NOTIFY_STOP)
-		return;
-	die("general protection fault", regs, error_code);
+exit:
+	exception_exit(prev_state);
 }
 
 /* May run on IST stack. */
-dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
+dotraplinkage void __kprobes notrace do_int3(struct pt_regs *regs, long error_code)
 {
+	enum ctx_state prev_state;
+
+#ifdef CONFIG_DYNAMIC_FTRACE
+	/*
+	 * ftrace must be first, everything else may cause a recursive crash.
+	 * See note by declaration of modifying_ftrace_code in ftrace.c
+	 */
+	if (unlikely(atomic_read(&modifying_ftrace_code)) &&
+	    ftrace_int3_handler(regs))
+		return;
+#endif
+	prev_state = exception_enter();
 #ifdef CONFIG_KGDB_LOW_LEVEL_TRAP
 	if (kgdb_ll_trap(DIE_INT3, "int3", regs, error_code, X86_TRAP_BP,
 				SIGTRAP) == NOTIFY_STOP)
-		return;
+		goto exit;
 #endif /* CONFIG_KGDB_LOW_LEVEL_TRAP */
 
 	if (notify_die(DIE_INT3, "int3", regs, error_code, X86_TRAP_BP,
 			SIGTRAP) == NOTIFY_STOP)
-		return;
+		goto exit;
 
 	/*
 	 * Let others (NMI) know that the debug stack is in use
@@ -324,6 +352,8 @@ dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
 	do_trap(X86_TRAP_BP, SIGTRAP, "int3", regs, error_code, NULL);
 	preempt_conditional_cli(regs);
 	debug_stack_usage_dec();
+exit:
+	exception_exit(prev_state);
 }
 
 #ifdef CONFIG_X86_64
@@ -332,7 +362,7 @@ dotraplinkage void __kprobes do_int3(struct pt_regs *regs, long error_code)
  * for scheduling or signal handling. The actual stack switch is done in
  * entry.S
  */
-asmlinkage __kprobes struct pt_regs *sync_regs(struct pt_regs *eregs)
+asmlinkage notrace __kprobes struct pt_regs *sync_regs(struct pt_regs *eregs)
 {
 	struct pt_regs *regs = eregs;
 	/* Did already sync */
@@ -350,6 +380,35 @@ asmlinkage __kprobes struct pt_regs *sync_regs(struct pt_regs *eregs)
 	if (eregs != regs)
 		*regs = *eregs;
 	return regs;
+}
+
+struct bad_iret_stack {
+	void *error_entry_ret;
+	struct pt_regs regs;
+};
+
+asmlinkage __visible notrace __kprobes
+struct bad_iret_stack *fixup_bad_iret(struct bad_iret_stack *s)
+{
+	/*
+	 * This is called from entry_64.S early in handling a fault
+	 * caused by a bad iret to user mode.  To handle the fault
+	 * correctly, we want move our stack frame to task_pt_regs
+	 * and we want to pretend that the exception came from the
+	 * iret target.
+	 */
+	struct bad_iret_stack *new_stack =
+		container_of(task_pt_regs(current),
+			     struct bad_iret_stack, regs);
+
+	/* Copy the IRET target to the new stack. */
+	memmove(&new_stack->regs.ip, (void *)s->regs.sp, 5*8);
+
+	/* Copy the remainder of the stack from the current stack. */
+	memmove(new_stack, s, offsetof(struct bad_iret_stack, regs.ip));
+
+	BUG_ON(!user_mode_vm(&new_stack->regs));
+	return new_stack;
 }
 #endif
 
@@ -380,9 +439,12 @@ asmlinkage __kprobes struct pt_regs *sync_regs(struct pt_regs *eregs)
 dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 {
 	struct task_struct *tsk = current;
+	enum ctx_state prev_state;
 	int user_icebp = 0;
 	unsigned long dr6;
 	int si_code;
+
+	prev_state = exception_enter();
 
 	get_debugreg(dr6, 6);
 
@@ -399,7 +461,7 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 
 	/* Catch kmemcheck conditions first of all! */
 	if ((dr6 & DR_STEP) && kmemcheck_trap(regs))
-		return;
+		goto exit;
 
 	/* DR6 may or may not be cleared by the CPU */
 	set_debugreg(0, 6);
@@ -414,7 +476,7 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 
 	if (notify_die(DIE_DEBUG, "debug", regs, PTR_ERR(&dr6), error_code,
 							SIGTRAP) == NOTIFY_STOP)
-		return;
+		goto exit;
 
 	/*
 	 * Let others (NMI) know that the debug stack is in use
@@ -430,7 +492,7 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 					X86_TRAP_DB);
 		preempt_conditional_cli(regs);
 		debug_stack_usage_dec();
-		return;
+		goto exit;
 	}
 
 	/*
@@ -451,7 +513,8 @@ dotraplinkage void __kprobes do_debug(struct pt_regs *regs, long error_code)
 	preempt_conditional_cli(regs);
 	debug_stack_usage_dec();
 
-	return;
+exit:
+	exception_exit(prev_state);
 }
 
 /*
@@ -545,17 +608,21 @@ void math_error(struct pt_regs *regs, int error_code, int trapnr)
 
 dotraplinkage void do_coprocessor_error(struct pt_regs *regs, long error_code)
 {
-#ifdef CONFIG_X86_32
-	ignore_fpu_irq = 1;
-#endif
+	enum ctx_state prev_state;
 
+	prev_state = exception_enter();
 	math_error(regs, error_code, X86_TRAP_MF);
+	exception_exit(prev_state);
 }
 
 dotraplinkage void
 do_simd_coprocessor_error(struct pt_regs *regs, long error_code)
 {
+	enum ctx_state prev_state;
+
+	prev_state = exception_enter();
 	math_error(regs, error_code, X86_TRAP_XF);
+	exception_exit(prev_state);
 }
 
 dotraplinkage void
@@ -564,7 +631,7 @@ do_spurious_interrupt_bug(struct pt_regs *regs, long error_code)
 	conditional_sti(regs);
 #if 0
 	/* No need to warn about this any longer. */
-	printk(KERN_INFO "Ignoring P6 Local APIC Spurious Interrupt Bug...\n");
+	pr_info("Ignoring P6 Local APIC Spurious Interrupt Bug...\n");
 #endif
 }
 
@@ -606,11 +673,12 @@ void math_state_restore(void)
 	}
 
 	__thread_fpu_begin(tsk);
+
 	/*
 	 * Paranoid restore. send a SIGSEGV if we fail to restore the state.
 	 */
 	if (unlikely(restore_fpu_checking(tsk))) {
-		__thread_fpu_end(tsk);
+		drop_init_fpu(tsk);
 		force_sig(SIGSEGV, tsk);
 		return;
 	}
@@ -622,6 +690,11 @@ EXPORT_SYMBOL_GPL(math_state_restore);
 dotraplinkage void __kprobes
 do_device_not_available(struct pt_regs *regs, long error_code)
 {
+	enum ctx_state prev_state;
+
+	prev_state = exception_enter();
+	BUG_ON(use_eager_fpu());
+
 #ifdef CONFIG_MATH_EMULATION
 	if (read_cr0() & X86_CR0_EM) {
 		struct math_emu_info info = { };
@@ -630,6 +703,7 @@ do_device_not_available(struct pt_regs *regs, long error_code)
 
 		info.regs = regs;
 		math_emulate(&info);
+		exception_exit(prev_state);
 		return;
 	}
 #endif
@@ -637,12 +711,16 @@ do_device_not_available(struct pt_regs *regs, long error_code)
 #ifdef CONFIG_X86_32
 	conditional_sti(regs);
 #endif
+	exception_exit(prev_state);
 }
 
 #ifdef CONFIG_X86_32
 dotraplinkage void do_iret_error(struct pt_regs *regs, long error_code)
 {
 	siginfo_t info;
+	enum ctx_state prev_state;
+
+	prev_state = exception_enter();
 	local_irq_enable();
 
 	info.si_signo = SIGILL;
@@ -650,10 +728,11 @@ dotraplinkage void do_iret_error(struct pt_regs *regs, long error_code)
 	info.si_code = ILL_BADSTK;
 	info.si_addr = NULL;
 	if (notify_die(DIE_TRAP, "iret exception", regs, error_code,
-			X86_TRAP_IRET, SIGILL) == NOTIFY_STOP)
-		return;
-	do_trap(X86_TRAP_IRET, SIGILL, "iret exception", regs, error_code,
-		&info);
+			X86_TRAP_IRET, SIGILL) != NOTIFY_STOP) {
+		do_trap(X86_TRAP_IRET, SIGILL, "iret exception", regs, error_code,
+			&info);
+	}
+	exception_exit(prev_state);
 }
 #endif
 
@@ -663,8 +742,17 @@ void __init early_trap_init(void)
 	set_intr_gate_ist(X86_TRAP_DB, &debug, DEBUG_STACK);
 	/* int3 can be called from all */
 	set_system_intr_gate_ist(X86_TRAP_BP, &int3, DEBUG_STACK);
+#ifdef CONFIG_X86_32
 	set_intr_gate(X86_TRAP_PF, &page_fault);
+#endif
 	load_idt(&idt_descr);
+}
+
+void __init early_trap_pf_init(void)
+{
+#ifdef CONFIG_X86_64
+	set_intr_gate(X86_TRAP_PF, &page_fault);
+#endif
 }
 
 void __init trap_init(void)
@@ -694,7 +782,7 @@ void __init trap_init(void)
 	set_intr_gate(X86_TRAP_OLD_MF, &coprocessor_segment_overrun);
 	set_intr_gate(X86_TRAP_TS, &invalid_TSS);
 	set_intr_gate(X86_TRAP_NP, &segment_not_present);
-	set_intr_gate_ist(X86_TRAP_SS, &stack_segment, STACKFAULT_STACK);
+	set_intr_gate(X86_TRAP_SS, stack_segment);
 	set_intr_gate(X86_TRAP_GP, &general_protection);
 	set_intr_gate(X86_TRAP_SPURIOUS, &spurious_interrupt_bug);
 	set_intr_gate(X86_TRAP_MF, &coprocessor_error);
@@ -717,6 +805,14 @@ void __init trap_init(void)
 	set_system_trap_gate(SYSCALL_VECTOR, &system_call);
 	set_bit(SYSCALL_VECTOR, used_vectors);
 #endif
+
+	/*
+	 * Set the IDT descriptor to a fixed read-only location, so that the
+	 * "sidt" instruction will not leak the location of the kernel, and
+	 * to defend the IDT against arbitrary memory write vulnerabilities.
+	 * It will be reloaded in cpu_init() */
+	__set_fixmap(FIX_RO_IDT, __pa_symbol(idt_table), PAGE_KERNEL_RO);
+	idt_descr.address = fix_to_virt(FIX_RO_IDT);
 
 	/*
 	 * Should be a barrier for any external CPU state:

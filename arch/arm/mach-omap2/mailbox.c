@@ -16,8 +16,10 @@
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/pm_runtime.h>
+
 #include <plat/mailbox.h>
-#include <mach/irqs.h>
+
+#include "soc.h"
 
 #define MAILBOX_REVISION		0x000
 #define MAILBOX_MESSAGE(m)		(0x040 + 4 * (m))
@@ -26,9 +28,9 @@
 #define MAILBOX_IRQSTATUS(u)		(0x100 + 8 * (u))
 #define MAILBOX_IRQENABLE(u)		(0x104 + 8 * (u))
 
-#define OMAP4_MAILBOX_IRQSTATUS(u)	(0x104 + 10 * (u))
-#define OMAP4_MAILBOX_IRQENABLE(u)	(0x108 + 10 * (u))
-#define OMAP4_MAILBOX_IRQENABLE_CLR(u)	(0x10c + 10 * (u))
+#define OMAP4_MAILBOX_IRQSTATUS(u)	(0x104 + 0x10 * (u))
+#define OMAP4_MAILBOX_IRQENABLE(u)	(0x108 + 0x10 * (u))
+#define OMAP4_MAILBOX_IRQENABLE_CLR(u)	(0x10c + 0x10 * (u))
 
 #define MAILBOX_IRQ_NEWMSG(m)		(1 << (2 * (m)))
 #define MAILBOX_IRQ_NOTFULL(m)		(1 << (2 * (m) + 1))
@@ -82,8 +84,6 @@ static int omap2_mbox_startup(struct omap_mbox *mbox)
 
 	l = mbox_read_reg(MAILBOX_REVISION);
 	pr_debug("omap mailbox rev %d.%d\n", (l & 0xf0) >> 4, (l & 0x0f));
-
-	omap2_mbox_enable_irq(mbox, IRQ_RX);
 
 	return 0;
 }
@@ -342,7 +342,7 @@ struct omap_mbox mbox_2_info = {
 struct omap_mbox *omap4_mboxes[] = { &mbox_1_info, &mbox_2_info, NULL };
 #endif
 
-static int __devinit omap2_mbox_probe(struct platform_device *pdev)
+static int omap2_mbox_probe(struct platform_device *pdev)
 {
 	struct resource *mem;
 	int ret;
@@ -395,7 +395,7 @@ static int __devinit omap2_mbox_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit omap2_mbox_remove(struct platform_device *pdev)
+static int omap2_mbox_remove(struct platform_device *pdev)
 {
 	omap_mbox_unregister();
 	iounmap(mbox_base);
@@ -404,7 +404,7 @@ static int __devexit omap2_mbox_remove(struct platform_device *pdev)
 
 static struct platform_driver omap2_mbox_driver = {
 	.probe = omap2_mbox_probe,
-	.remove = __devexit_p(omap2_mbox_remove),
+	.remove = omap2_mbox_remove,
 	.driver = {
 		.name = "omap-mailbox",
 	},

@@ -26,12 +26,12 @@
 #include <asm/mach/arch.h>
 #include <mach/pxa3xx.h>
 #include <mach/audio.h>
-#include <mach/pxafb.h>
+#include <linux/platform_data/video-pxafb.h>
 #include <mach/zylonite.h>
-#include <mach/mmc.h>
-#include <mach/ohci.h>
-#include <plat/pxa27x_keypad.h>
-#include <plat/pxa3xx_nand.h>
+#include <linux/platform_data/mmc-pxamci.h>
+#include <linux/platform_data/usb-ohci-pxa27x.h>
+#include <linux/platform_data/keypad-pxa27x.h>
+#include <linux/platform_data/mtd-nand-pxa3xx.h>
 
 #include "devices.h"
 #include "generic.h"
@@ -428,7 +428,7 @@ MACHINE_START(ZYLONITE, "PXA3xx Platform Development Kit (aka Zylonite)")
 	.nr_irqs	= ZYLONITE_NR_IRQS,
 	.init_irq	= pxa3xx_init_irq,
 	.handle_irq	= pxa3xx_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= zylonite_init,
 	.restart	= pxa_restart,
 MACHINE_END

@@ -750,12 +750,12 @@ static int setup_cipher(struct crypto_tfm *tfm, int encrypt,
 	}
 	if (cipher_cfg & MOD_AES) {
 		switch (key_len) {
-			case 16: keylen_cfg = MOD_AES128 | KEYLEN_128; break;
-			case 24: keylen_cfg = MOD_AES192 | KEYLEN_192; break;
-			case 32: keylen_cfg = MOD_AES256 | KEYLEN_256; break;
-			default:
-				*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
-				return -EINVAL;
+		case 16: keylen_cfg = MOD_AES128; break;
+		case 24: keylen_cfg = MOD_AES192; break;
+		case 32: keylen_cfg = MOD_AES256; break;
+		default:
+			*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+			return -EINVAL;
 		}
 		cipher_cfg |= keylen_cfg;
 	} else if (cipher_cfg & MOD_3DES) {
@@ -915,7 +915,6 @@ static int ablk_perform(struct ablkcipher_request *req, int encrypt)
 		crypt->mode |= NPE_OP_NOT_IN_PLACE;
 		/* This was never tested by Intel
 		 * for more than one dst buffer, I think. */
-		BUG_ON(req->dst->length < nbytes);
 		req_ctx->dst = NULL;
 		if (!chainup_buffers(dev, req->dst, nbytes, &dst_hook,
 					flags, DMA_FROM_DEVICE))

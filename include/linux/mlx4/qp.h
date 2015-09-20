@@ -126,7 +126,8 @@ struct mlx4_rss_context {
 
 struct mlx4_qp_path {
 	u8			fl;
-	u8			reserved1[2];
+	u8			vlan_control;
+	u8			disable_pkey_check;
 	u8			pkey_index;
 	u8			counter_index;
 	u8			grh_mylmc;
@@ -139,9 +140,31 @@ struct mlx4_qp_path {
 	u8			rgid[16];
 	u8			sched_queue;
 	u8			vlan_index;
-	u8			reserved3[2];
+	u8			feup;
+	u8			fvl_rx;
 	u8			reserved4[2];
 	u8			dmac[6];
+};
+
+enum { /* fl */
+	MLX4_FL_CV      = 1 << 6,
+	MLX4_FL_ETH_HIDE_CQE_VLAN       = 1 << 2
+};
+enum { /* vlan_control */
+	MLX4_VLAN_CTRL_ETH_TX_BLOCK_TAGGED	= 1 << 6,
+	MLX4_VLAN_CTRL_ETH_RX_BLOCK_TAGGED	= 1 << 2,
+	MLX4_VLAN_CTRL_ETH_RX_BLOCK_PRIO_TAGGED	= 1 << 1, /* 802.1p priority tag */
+	MLX4_VLAN_CTRL_ETH_RX_BLOCK_UNTAGGED	= 1 << 0
+};
+
+enum { /* feup */
+	MLX4_FEUP_FORCE_ETH_UP          = 1 << 6, /* force Eth UP */
+	MLX4_FSM_FORCE_ETH_SRC_MAC      = 1 << 5, /* force Source MAC */
+	MLX4_FVL_FORCE_ETH_VLAN         = 1 << 3  /* force Eth vlan */
+};
+
+enum { /* fvl_rx */
+	MLX4_FVL_RX_FORCE_ETH_VLAN      = 1 << 0 /* enforce Eth rx vlan */
 };
 
 struct mlx4_qp_context {
@@ -181,6 +204,10 @@ struct mlx4_qp_context {
 	u8			mtt_base_addr_h;
 	__be32			mtt_base_addr_l;
 	u32			reserved5[10];
+};
+
+enum { /* param3 */
+	MLX4_STRIP_VLAN = 1 << 30
 };
 
 /* Which firmware version adds support for NEC (NoErrorCompletion) bit */
@@ -233,7 +260,8 @@ struct mlx4_wqe_mlx_seg {
 	u8			owner;
 	u8			reserved1[2];
 	u8			opcode;
-	u8			reserved2[3];
+	__be16			sched_prio;
+	u8			reserved2;
 	u8			size;
 	/*
 	 * [17]    VL15
@@ -262,6 +290,11 @@ struct mlx4_wqe_lso_seg {
 	__be32			header[0];
 };
 
+enum mlx4_wqe_bind_seg_flags2 {
+	MLX4_WQE_BIND_ZERO_BASED = (1 << 30),
+	MLX4_WQE_BIND_TYPE_2     = (1 << 31),
+};
+
 struct mlx4_wqe_bind_seg {
 	__be32			flags1;
 	__be32			flags2;
@@ -274,9 +307,9 @@ struct mlx4_wqe_bind_seg {
 enum {
 	MLX4_WQE_FMR_PERM_LOCAL_READ	= 1 << 27,
 	MLX4_WQE_FMR_PERM_LOCAL_WRITE	= 1 << 28,
-	MLX4_WQE_FMR_PERM_REMOTE_READ	= 1 << 29,
-	MLX4_WQE_FMR_PERM_REMOTE_WRITE	= 1 << 30,
-	MLX4_WQE_FMR_PERM_ATOMIC	= 1 << 31
+	MLX4_WQE_FMR_AND_BIND_PERM_REMOTE_READ	= 1 << 29,
+	MLX4_WQE_FMR_AND_BIND_PERM_REMOTE_WRITE	= 1 << 30,
+	MLX4_WQE_FMR_AND_BIND_PERM_ATOMIC	= 1 << 31
 };
 
 struct mlx4_wqe_fmr_seg {
@@ -301,12 +334,10 @@ struct mlx4_wqe_fmr_ext_seg {
 };
 
 struct mlx4_wqe_local_inval_seg {
-	__be32			flags;
-	u32			reserved1;
+	u64			reserved1;
 	__be32			mem_key;
-	u32			reserved2[2];
-	__be32			guest_id;
-	__be64			pa;
+	u32			reserved2;
+	u64			reserved3[2];
 };
 
 struct mlx4_wqe_raddr_seg {

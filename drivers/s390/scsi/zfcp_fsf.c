@@ -257,7 +257,7 @@ static void zfcp_fsf_status_read_handler(struct zfcp_fsf_req *req)
 		if (sr_buf->status_subtype & FSF_STATUS_READ_SUB_ACT_UPDATED)
 			zfcp_cfdc_adapter_access_changed(adapter);
 		if (sr_buf->status_subtype & FSF_STATUS_READ_SUB_INCOMING_ELS)
-			queue_work(adapter->work_queue, &adapter->scan_work);
+			zfcp_fc_conditional_port_scan(adapter);
 		break;
 	case FSF_STATUS_READ_CFDC_UPDATED:
 		zfcp_cfdc_adapter_access_changed(adapter);
@@ -740,7 +740,7 @@ static int zfcp_fsf_req_send(struct zfcp_fsf_req *req)
 	zfcp_reqlist_add(adapter->req_list, req);
 
 	req->qdio_req.qdio_outb_usage = atomic_read(&qdio->req_q_free);
-	req->issued = get_clock();
+	req->issued = get_tod_clock();
 	if (zfcp_qdio_send(qdio, &req->qdio_req)) {
 		del_timer(&req->timer);
 		/* lookup request again, list might have changed */

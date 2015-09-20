@@ -30,12 +30,11 @@
  * Integrated TV-out support for the 915GM and 945GM.
  */
 
-#include "drmP.h"
-#include "drm.h"
-#include "drm_crtc.h"
-#include "drm_edid.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_edid.h>
 #include "intel_drv.h"
-#include "i915_drm.h"
+#include <drm/i915_drm.h>
 #include "i915_drv.h"
 
 enum tv_margin {
@@ -836,22 +835,41 @@ static struct intel_tv *intel_attached_tv(struct drm_connector *connector)
 			    base);
 }
 
-static void
-intel_tv_dpms(struct drm_encoder *encoder, int mode)
+static bool
+intel_tv_get_hw_state(struct intel_encoder *encoder, enum pipe *pipe)
 {
-	struct drm_device *dev = encoder->dev;
+	struct drm_device *dev = encoder->base.dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	u32 tmp = I915_READ(TV_CTL);
+
+	if (!(tmp & TV_ENC_ENABLE))
+		return false;
+
+	*pipe = PORT_TO_PIPE(tmp);
+
+	return true;
+}
+
+static void
+intel_enable_tv(struct intel_encoder *encoder)
+{
+	struct drm_device *dev = encoder->base.dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 
-	switch (mode) {
-	case DRM_MODE_DPMS_ON:
-		I915_WRITE(TV_CTL, I915_READ(TV_CTL) | TV_ENC_ENABLE);
-		break;
-	case DRM_MODE_DPMS_STANDBY:
-	case DRM_MODE_DPMS_SUSPEND:
-	case DRM_MODE_DPMS_OFF:
-		I915_WRITE(TV_CTL, I915_READ(TV_CTL) & ~TV_ENC_ENABLE);
-		break;
-	}
+	/* Prevents vblank waits from timing out in intel_tv_detect_type() */
+	intel_wait_for_vblank(encoder->base.dev,
+			      to_intel_crtc(encoder->base.crtc)->pipe);
+
+	I915_WRITE(TV_CTL, I915_READ(TV_CTL) | TV_ENC_ENABLE);
+}
+
+static void
+intel_disable_tv(struct intel_encoder *encoder)
+{
+	struct drm_device *dev = encoder->base.dev;
+	struct drm_i915_private *dev_priv = dev->dev_private;
+
+	I915_WRITE(TV_CTL, I915_READ(TV_CTL) & ~TV_ENC_ENABLE);
 }
 
 static const struct tv_mode *
@@ -859,7 +877,7 @@ intel_tv_mode_lookup(const char *tv_format)
 {
 	int i;
 
-	for (i = 0; i < sizeof(tv_modes) / sizeof(tv_modes[0]); i++) {
+	for (i = 0; i < ARRAY_SIZE(tv_modes); i++) {
 		const struct tv_mode *tv_mode = &tv_modes[i];
 
 		if (!strcmp(tv_format, tv_mode->name))
@@ -891,26 +909,30 @@ intel_tv_mode_valid(struct drm_connector *connector,
 
 
 static bool
-intel_tv_mode_fixup(struct drm_encoder *encoder, struct drm_display_mode *mode,
-		    struct drm_display_mode *adjusted_mode)
+intel_tv_compute_config(struct intel_encoder *encoder,
+			struct intel_crtc_config *pipe_config)
 {
-	struct drm_device *dev = encoder->dev;
-	struct drm_mode_config *drm_config = &dev->mode_config;
-	struct intel_tv *intel_tv = enc_to_intel_tv(encoder);
+	struct intel_tv *intel_tv = enc_to_intel_tv(&encoder->base);
 	const struct tv_mode *tv_mode = intel_tv_mode_find(intel_tv);
-	struct drm_encoder *other_encoder;
 
 	if (!tv_mode)
 		return false;
 
-	/* FIXME: lock encoder list */
-	list_for_each_entry(other_encoder, &drm_config->encoder_list, head) {
-		if (other_encoder != encoder &&
-		    other_encoder->crtc == encoder->crtc)
-			return false;
-	}
+	if (intel_encoder_check_is_cloned(&intel_tv->base))
+		return false;
 
-	adjusted_mode->clock = tv_mode->clock;
+	pipe_config->adjusted_mode.clock = tv_mode->clock;
+	DRM_DEBUG_KMS("forcing bpc to 8 for TV\n");
+	pipe_config->pipe_bpp = 8*3;
+
+	/* TV has it's own notion of sync and other mode flags, so clear them. */
+	pipe_config->adjusted_mode.flags = 0;
+
+	/*
+	 * FIXME: We don't check whether the input mode is actually what we want
+	 * or whether userspace is doing something stupid.
+	 */
+
 	return true;
 }
 
@@ -1080,13 +1102,11 @@ intel_tv_mode_set(struct drm_encoder *encoder, struct drm_display_mode *mode,
 		int dspcntr_reg = DSPCNTR(intel_crtc->plane);
 		int pipeconf = I915_READ(pipeconf_reg);
 		int dspcntr = I915_READ(dspcntr_reg);
-		int dspbase_reg = DSPADDR(intel_crtc->plane);
 		int xpos = 0x0, ypos = 0x0;
 		unsigned int xsize, ysize;
 		/* Pipe must be off here */
 		I915_WRITE(dspcntr_reg, dspcntr & ~DISPLAY_PLANE_ENABLE);
-		/* Flush the plane changes */
-		I915_WRITE(dspbase_reg, I915_READ(dspbase_reg));
+		intel_flush_display_plane(dev_priv, intel_crtc->plane);
 
 		/* Wait for vblank for the disable to take effect */
 		if (IS_GEN2(dev))
@@ -1115,8 +1135,7 @@ intel_tv_mode_set(struct drm_encoder *encoder, struct drm_display_mode *mode,
 
 		I915_WRITE(pipeconf_reg, pipeconf);
 		I915_WRITE(dspcntr_reg, dspcntr);
-		/* Flush the plane changes */
-		I915_WRITE(dspbase_reg, I915_READ(dspbase_reg));
+		intel_flush_display_plane(dev_priv, intel_crtc->plane);
 	}
 
 	j = 0;
@@ -1201,6 +1220,15 @@ intel_tv_detect_type(struct intel_tv *intel_tv,
 		   DAC_B_0_7_V |
 		   DAC_C_0_7_V);
 
+
+	/*
+	 * The TV sense state should be cleared to zero on cantiga platform. Otherwise
+	 * the TV is misdetected. This is hardware requirement.
+	 */
+	if (IS_GM45(dev))
+		tv_dac &= ~(TVDAC_STATE_CHG_EN | TVDAC_A_SENSE_CTL |
+			    TVDAC_B_SENSE_CTL | TVDAC_C_SENSE_CTL);
+
 	I915_WRITE(TV_CTL, tv_ctl);
 	I915_WRITE(TV_DAC, tv_dac);
 	POSTING_READ(TV_DAC);
@@ -1275,7 +1303,7 @@ static void intel_tv_find_better_format(struct drm_connector *connector)
 	}
 
 	intel_tv->tv_format = tv_mode->name;
-	drm_connector_property_set_value(connector,
+	drm_object_property_set_value(&connector->base,
 		connector->dev->mode_config.tv_mode_property, i);
 }
 
@@ -1293,19 +1321,13 @@ intel_tv_detect(struct drm_connector *connector, bool force)
 	int type;
 
 	mode = reported_modes[0];
-	drm_mode_set_crtcinfo(&mode, 0);
 
-	if (intel_tv->base.base.crtc && intel_tv->base.base.crtc->enabled) {
-		type = intel_tv_detect_type(intel_tv, connector);
-	} else if (force) {
+	if (force) {
 		struct intel_load_detect_pipe tmp;
 
-		if (intel_get_load_detect_pipe(&intel_tv->base, connector,
-					       &mode, &tmp)) {
+		if (intel_get_load_detect_pipe(connector, &mode, &tmp)) {
 			type = intel_tv_detect_type(intel_tv, connector);
-			intel_release_load_detect_pipe(&intel_tv->base,
-						       connector,
-						       &tmp);
+			intel_release_load_detect_pipe(connector, &tmp);
 		} else
 			return connector_status_unknown;
 	} else
@@ -1435,7 +1457,7 @@ intel_tv_set_property(struct drm_connector *connector, struct drm_property *prop
 	int ret = 0;
 	bool changed = false;
 
-	ret = drm_connector_property_set_value(connector, property, val);
+	ret = drm_object_property_set_value(&connector->base, property, val);
 	if (ret < 0)
 		goto out;
 
@@ -1471,22 +1493,17 @@ intel_tv_set_property(struct drm_connector *connector, struct drm_property *prop
 	}
 
 	if (changed && crtc)
-		drm_crtc_helper_set_mode(crtc, &crtc->mode, crtc->x,
-				crtc->y, crtc->fb);
+		intel_crtc_restore_mode(crtc);
 out:
 	return ret;
 }
 
 static const struct drm_encoder_helper_funcs intel_tv_helper_funcs = {
-	.dpms = intel_tv_dpms,
-	.mode_fixup = intel_tv_mode_fixup,
-	.prepare = intel_encoder_prepare,
 	.mode_set = intel_tv_mode_set,
-	.commit = intel_encoder_commit,
 };
 
 static const struct drm_connector_funcs intel_tv_connector_funcs = {
-	.dpms = drm_helper_connector_dpms,
+	.dpms = intel_connector_dpms,
 	.detect = intel_tv_detect,
 	.destroy = intel_tv_destroy,
 	.set_property = intel_tv_set_property,
@@ -1608,7 +1625,7 @@ intel_tv_init(struct drm_device *dev)
 	 *
 	 * More recent chipsets favour HDMI rather than integrated S-Video.
 	 */
-	connector->polled = DRM_CONNECTOR_POLL_CONNECT;
+	intel_connector->polled = DRM_CONNECTOR_POLL_CONNECT;
 
 	drm_connector_init(dev, connector, &intel_tv_connector_funcs,
 			   DRM_MODE_CONNECTOR_SVIDEO);
@@ -1616,10 +1633,16 @@ intel_tv_init(struct drm_device *dev)
 	drm_encoder_init(dev, &intel_encoder->base, &intel_tv_enc_funcs,
 			 DRM_MODE_ENCODER_TVDAC);
 
+	intel_encoder->compute_config = intel_tv_compute_config;
+	intel_encoder->enable = intel_enable_tv;
+	intel_encoder->disable = intel_disable_tv;
+	intel_encoder->get_hw_state = intel_tv_get_hw_state;
+	intel_connector->get_hw_state = intel_connector_get_hw_state;
+
 	intel_connector_attach_encoder(intel_connector, intel_encoder);
 	intel_encoder->type = INTEL_OUTPUT_TVOUT;
 	intel_encoder->crtc_mask = (1 << 0) | (1 << 1);
-	intel_encoder->clone_mask = (1 << INTEL_TV_CLONE_BIT);
+	intel_encoder->cloneable = false;
 	intel_encoder->base.possible_crtcs = ((1 << 0) | (1 << 1));
 	intel_encoder->base.possible_clones = (1 << INTEL_OUTPUT_TVOUT);
 	intel_tv->type = DRM_MODE_CONNECTOR_Unknown;
@@ -1644,18 +1667,18 @@ intel_tv_init(struct drm_device *dev)
 				      ARRAY_SIZE(tv_modes),
 				      tv_format_names);
 
-	drm_connector_attach_property(connector, dev->mode_config.tv_mode_property,
+	drm_object_attach_property(&connector->base, dev->mode_config.tv_mode_property,
 				   initial_mode);
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				   dev->mode_config.tv_left_margin_property,
 				   intel_tv->margin[TV_MARGIN_LEFT]);
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				   dev->mode_config.tv_top_margin_property,
 				   intel_tv->margin[TV_MARGIN_TOP]);
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				   dev->mode_config.tv_right_margin_property,
 				   intel_tv->margin[TV_MARGIN_RIGHT]);
-	drm_connector_attach_property(connector,
+	drm_object_attach_property(&connector->base,
 				   dev->mode_config.tv_bottom_margin_property,
 				   intel_tv->margin[TV_MARGIN_BOTTOM]);
 	drm_sysfs_connector_add(connector);

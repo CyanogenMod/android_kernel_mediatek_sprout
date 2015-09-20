@@ -47,8 +47,8 @@
 #include <linux/atomic.h>
 #include <linux/device.h>
 #include <linux/kthread.h>
-#include "ttm/ttm_bo_driver.h"
-#include "ttm/ttm_page_alloc.h"
+#include <drm/ttm/ttm_bo_driver.h>
+#include <drm/ttm/ttm_page_alloc.h>
 #ifdef TTM_HAS_AGP
 #include <asm/agp.h>
 #endif
@@ -1006,9 +1006,9 @@ EXPORT_SYMBOL_GPL(ttm_dma_unpopulate);
 static int ttm_dma_pool_mm_shrink(struct shrinker *shrink,
 				  struct shrink_control *sc)
 {
-	static atomic_t start_pool = ATOMIC_INIT(0);
+	static unsigned start_pool;
 	unsigned idx = 0;
-	unsigned pool_offset = atomic_add_return(1, &start_pool);
+	unsigned pool_offset;
 	unsigned shrink_pages = sc->nr_to_scan;
 	struct device_pools *p;
 
@@ -1016,7 +1016,9 @@ static int ttm_dma_pool_mm_shrink(struct shrinker *shrink,
 		return 0;
 
 	mutex_lock(&_manager->lock);
-	pool_offset = pool_offset % _manager->npools;
+	if (!_manager->npools)
+		goto out;
+	pool_offset = ++start_pool % _manager->npools;
 	list_for_each_entry(p, &_manager->pools, pools) {
 		unsigned nr_free;
 
@@ -1033,6 +1035,7 @@ static int ttm_dma_pool_mm_shrink(struct shrinker *shrink,
 			 p->pool->dev_name, p->pool->name, current->pid,
 			 nr_free, shrink_pages);
 	}
+out:
 	mutex_unlock(&_manager->lock);
 	/* return estimated number of unused pages in pool */
 	return ttm_dma_pool_get_num_unused_pages();
@@ -1060,7 +1063,7 @@ int ttm_dma_page_alloc_init(struct ttm_mem_global *glob, unsigned max_pages)
 
 	_manager = kzalloc(sizeof(*_manager), GFP_KERNEL);
 	if (!_manager)
-		goto err_manager;
+		goto err;
 
 	mutex_init(&_manager->lock);
 	INIT_LIST_HEAD(&_manager->pools);
@@ -1078,9 +1081,6 @@ int ttm_dma_page_alloc_init(struct ttm_mem_global *glob, unsigned max_pages)
 	}
 	ttm_dma_pool_mm_shrink_init(_manager);
 	return 0;
-err_manager:
-	kfree(_manager);
-	_manager = NULL;
 err:
 	return ret;
 }

@@ -159,7 +159,6 @@ kalmia_bind(struct usbnet *dev, struct usb_interface *intf)
 	}
 
 	memcpy(dev->net->dev_addr, ethernet_addr, ETH_ALEN);
-	memcpy(dev->net->perm_addr, ethernet_addr, ETH_ALEN);
 
 	return status;
 }
@@ -372,7 +371,8 @@ static struct usb_driver kalmia_driver = {
 	.probe = usbnet_probe,
 	.disconnect = usbnet_disconnect,
 	.suspend = usbnet_suspend,
-	.resume = usbnet_resume
+	.resume = usbnet_resume,
+	.disable_hub_initiated_lpm = 1,
 };
 
 module_usb_driver(kalmia_driver);

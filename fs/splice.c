@@ -31,6 +31,8 @@
 #include <linux/security.h>
 #include <linux/gfp.h>
 #include <linux/socket.h>
+#include <linux/compat.h>
+#include "internal.h"
 
 /*
  * Attempt to steal a page from a pipe buffer. This should perhaps go into
@@ -217,7 +219,7 @@ ssize_t splice_to_pipe(struct pipe_inode_info *pipe,
 			page_nr++;
 			ret += buf->len;
 
-			if (pipe->inode)
+			if (pipe->files)
 				do_wakeup = 1;
 
 			if (!--spd->nr_pages)
@@ -273,6 +275,7 @@ void spd_release_page(struct splice_pipe_desc *spd, unsigned int i)
  * Check if we need to grow the arrays holding pages and partial page
  * descriptions.
  */
+<<<<<<< HEAD
 /*
  * kernel patch
  * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
@@ -287,12 +290,17 @@ int splice_grow_spd(const struct pipe_inode_info *pipe, struct splice_pipe_desc 
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//if (pipe->buffers <= PIPE_DEF_BUFFERS)
+=======
+int splice_grow_spd(const struct pipe_inode_info *pipe, struct splice_pipe_desc *spd)
+{
+>>>>>>> v3.10.88
 	unsigned int buffers = ACCESS_ONCE(pipe->buffers);
 
 	spd->nr_pages_max = buffers;
 	if (buffers <= PIPE_DEF_BUFFERS)
 		return 0;
 
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
@@ -300,6 +308,8 @@ int splice_grow_spd(const struct pipe_inode_info *pipe, struct splice_pipe_desc 
          */
 	//spd->pages = kmalloc(pipe->buffers * sizeof(struct page *), GFP_KERNEL);
 	//spd->partial = kmalloc(pipe->buffers * sizeof(struct partial_page), GFP_KERNEL);
+=======
+>>>>>>> v3.10.88
 	spd->pages = kmalloc(buffers * sizeof(struct page *), GFP_KERNEL);
 	spd->partial = kmalloc(buffers * sizeof(struct partial_page), GFP_KERNEL);
 
@@ -311,6 +321,7 @@ int splice_grow_spd(const struct pipe_inode_info *pipe, struct splice_pipe_desc 
 	return -ENOMEM;
 }
 
+<<<<<<< HEAD
 /*
  * kernel patch
  * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
@@ -326,6 +337,10 @@ void splice_shrink_spd(struct splice_pipe_desc *spd)
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//if (pipe->buffers <= PIPE_DEF_BUFFERS)
+=======
+void splice_shrink_spd(struct splice_pipe_desc *spd)
+{
+>>>>>>> v3.10.88
 	if (spd->nr_pages_max <= PIPE_DEF_BUFFERS)
 		return;
 
@@ -349,11 +364,14 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.partial = partial,
+<<<<<<< HEAD
                 /*
                  * kernel patch
                  * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
                  * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
                  */
+=======
+>>>>>>> v3.10.88
 		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.flags = flags,
 		.ops = &page_cache_pipe_buf_ops,
@@ -366,12 +384,15 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 	index = *ppos >> PAGE_CACHE_SHIFT;
 	loff = *ppos & ~PAGE_CACHE_MASK;
 	req_pages = (len + loff + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//nr_pages = min(req_pages, pipe->buffers);
+=======
+>>>>>>> v3.10.88
 	nr_pages = min(req_pages, spd.nr_pages_max);
 
 	/*
@@ -543,12 +564,15 @@ fill_it:
 	if (spd.nr_pages)
 		error = splice_to_pipe(pipe, &spd);
 
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//splice_shrink_spd(pipe, &spd);
+=======
+>>>>>>> v3.10.88
 	splice_shrink_spd(&spd);
 	return error;
 }
@@ -602,6 +626,24 @@ static const struct pipe_buf_operations default_pipe_buf_ops = {
 	.get = generic_pipe_buf_get,
 };
 
+static int generic_pipe_buf_nosteal(struct pipe_inode_info *pipe,
+				    struct pipe_buffer *buf)
+{
+	return 1;
+}
+
+/* Pipe buffer operations for a socket and similar. */
+const struct pipe_buf_operations nosteal_pipe_buf_ops = {
+	.can_merge = 0,
+	.map = generic_pipe_buf_map,
+	.unmap = generic_pipe_buf_unmap,
+	.confirm = generic_pipe_buf_confirm,
+	.release = generic_pipe_buf_release,
+	.steal = generic_pipe_buf_nosteal,
+	.get = generic_pipe_buf_get,
+};
+EXPORT_SYMBOL(nosteal_pipe_buf_ops);
+
 static ssize_t kernel_readv(struct file *file, const struct iovec *vec,
 			    unsigned long vlen, loff_t offset)
 {
@@ -618,7 +660,7 @@ static ssize_t kernel_readv(struct file *file, const struct iovec *vec,
 	return res;
 }
 
-static ssize_t kernel_write(struct file *file, const char *buf, size_t count,
+ssize_t kernel_write(struct file *file, const char *buf, size_t count,
 			    loff_t pos)
 {
 	mm_segment_t old_fs;
@@ -627,11 +669,12 @@ static ssize_t kernel_write(struct file *file, const char *buf, size_t count,
 	old_fs = get_fs();
 	set_fs(get_ds());
 	/* The cast to a user pointer is valid due to the set_fs() */
-	res = vfs_write(file, (const char __user *)buf, count, &pos);
+	res = vfs_write(file, (__force const char __user *)buf, count, &pos);
 	set_fs(old_fs);
 
 	return res;
 }
+EXPORT_SYMBOL(kernel_write);
 
 ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 				 struct pipe_inode_info *pipe, size_t len,
@@ -650,11 +693,14 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.partial = partial,
+<<<<<<< HEAD
                 /*
                  * kernel patch
                  * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
                  * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
                  */
+=======
+>>>>>>> v3.10.88
 		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.flags = flags,
 		.ops = &default_pipe_buf_ops,
@@ -666,6 +712,7 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 
 	res = -ENOMEM;
 	vec = __vec;
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
@@ -673,6 +720,8 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
          */
 	//if (pipe->buffers > PIPE_DEF_BUFFERS) {
 	//	vec = kmalloc(pipe->buffers * sizeof(struct iovec), GFP_KERNEL);
+=======
+>>>>>>> v3.10.88
 	if (spd.nr_pages_max > PIPE_DEF_BUFFERS) {
 		vec = kmalloc(spd.nr_pages_max * sizeof(struct iovec), GFP_KERNEL);
 		if (!vec)
@@ -682,12 +731,15 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 	offset = *ppos & ~PAGE_CACHE_MASK;
 	nr_pages = (len + offset + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//for (i = 0; i < nr_pages && i < pipe->buffers && len; i++) {
+=======
+>>>>>>> v3.10.88
 	for (i = 0; i < nr_pages && i < spd.nr_pages_max && len; i++) {
 		struct page *page;
 
@@ -736,12 +788,15 @@ ssize_t default_file_splice_read(struct file *in, loff_t *ppos,
 shrink_ret:
 	if (vec != __vec)
 		kfree(vec);
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//splice_shrink_spd(pipe, &spd);
+=======
+>>>>>>> v3.10.88
 	splice_shrink_spd(&spd);
 	return res;
 
@@ -899,7 +954,7 @@ int splice_from_pipe_feed(struct pipe_inode_info *pipe, struct splice_desc *sd,
 			ops->release(pipe, buf);
 			pipe->curbuf = (pipe->curbuf + 1) & (pipe->buffers - 1);
 			pipe->nrbufs--;
-			if (pipe->inode)
+			if (pipe->files)
 				sd->need_wakeup = true;
 		}
 
@@ -1064,12 +1119,16 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 	struct address_space *mapping = out->f_mapping;
 	struct inode *inode = mapping->host;
 	struct splice_desc sd = {
-		.total_len = len,
 		.flags = flags,
-		.pos = *ppos,
 		.u.file = out,
 	};
 	ssize_t ret;
+
+	ret = generic_write_checks(out, ppos, &len, S_ISBLK(inode->i_mode));
+	if (ret)
+		return ret;
+	sd.total_len = len;
+	sd.pos = *ppos;
 
 	pipe_lock(pipe);
 
@@ -1082,8 +1141,10 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 		mutex_lock_nested(&inode->i_mutex, I_MUTEX_CHILD);
 		ret = file_remove_suid(out);
 		if (!ret) {
-			file_update_time(out);
-			ret = splice_from_pipe_feed(pipe, &sd, pipe_to_file);
+			ret = file_update_time(out);
+			if (!ret)
+				ret = splice_from_pipe_feed(pipe, &sd,
+							    pipe_to_file);
 		}
 		mutex_unlock(&inode->i_mutex);
 	} while (ret > 0);
@@ -1095,17 +1156,14 @@ generic_file_splice_write(struct pipe_inode_info *pipe, struct file *out,
 		ret = sd.num_spliced;
 
 	if (ret > 0) {
-		unsigned long nr_pages;
 		int err;
-
-		nr_pages = (ret + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 
 		err = generic_write_sync(out, *ppos, ret);
 		if (err)
 			ret = err;
 		else
 			*ppos += ret;
-		balance_dirty_pages_ratelimited_nr(mapping, nr_pages);
+		balance_dirty_pages_ratelimited(mapping);
 	}
 
 	return ret;
@@ -1118,9 +1176,10 @@ static int write_pipe_buf(struct pipe_inode_info *pipe, struct pipe_buffer *buf,
 {
 	int ret;
 	void *data;
+	loff_t tmp = sd->pos;
 
 	data = buf->ops->map(pipe, buf, 0);
-	ret = kernel_write(sd->u.file, data + buf->offset, sd->len, sd->pos);
+	ret = __kernel_write(sd->u.file, data + buf->offset, sd->len, &tmp);
 	buf->ops->unmap(pipe, buf, data);
 
 	return ret;
@@ -1185,7 +1244,10 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 	else
 		splice_write = default_file_splice_write;
 
-	return splice_write(pipe, out, ppos, len, flags);
+	file_start_write(out);
+	ret = splice_write(pipe, out, ppos, len, flags);
+	file_end_write(out);
+	return ret;
 }
 
 /*
@@ -1241,7 +1303,7 @@ ssize_t splice_direct_to_actor(struct file *in, struct splice_desc *sd,
 	 * randomly drop data for eg socket -> socket splicing. Use the
 	 * piped splicing for that!
 	 */
-	i_mode = in->f_path.dentry->d_inode->i_mode;
+	i_mode = file_inode(in)->i_mode;
 	if (unlikely(!S_ISREG(i_mode) && !S_ISBLK(i_mode)))
 		return -EINVAL;
 
@@ -1251,7 +1313,7 @@ ssize_t splice_direct_to_actor(struct file *in, struct splice_desc *sd,
 	 */
 	pipe = current->splice_pipe;
 	if (unlikely(!pipe)) {
-		pipe = alloc_pipe_info(NULL);
+		pipe = alloc_pipe_info();
 		if (!pipe)
 			return -ENOMEM;
 
@@ -1341,7 +1403,7 @@ static int direct_splice_actor(struct pipe_inode_info *pipe,
 {
 	struct file *file = sd->u.file;
 
-	return do_splice_from(pipe, file, &file->f_pos, sd->total_len,
+	return do_splice_from(pipe, file, sd->opos, sd->total_len,
 			      sd->flags);
 }
 
@@ -1350,6 +1412,7 @@ static int direct_splice_actor(struct pipe_inode_info *pipe,
  * @in:		file to splice from
  * @ppos:	input file offset
  * @out:	file to splice to
+ * @opos:	output file offset
  * @len:	number of bytes to splice
  * @flags:	splice modifier flags
  *
@@ -1361,7 +1424,7 @@ static int direct_splice_actor(struct pipe_inode_info *pipe,
  *
  */
 long do_splice_direct(struct file *in, loff_t *ppos, struct file *out,
-		      size_t len, unsigned int flags)
+		      loff_t *opos, size_t len, unsigned int flags)
 {
 	struct splice_desc sd = {
 		.len		= len,
@@ -1369,6 +1432,7 @@ long do_splice_direct(struct file *in, loff_t *ppos, struct file *out,
 		.flags		= flags,
 		.pos		= *ppos,
 		.u.file		= out,
+		.opos		= opos,
 	};
 	long ret;
 
@@ -1392,7 +1456,7 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 {
 	struct pipe_inode_info *ipipe;
 	struct pipe_inode_info *opipe;
-	loff_t offset, *off;
+	loff_t offset;
 	long ret;
 
 	ipipe = get_pipe_info(in);
@@ -1423,13 +1487,15 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 				return -EINVAL;
 			if (copy_from_user(&offset, off_out, sizeof(loff_t)))
 				return -EFAULT;
-			off = &offset;
-		} else
-			off = &out->f_pos;
+		} else {
+			offset = out->f_pos;
+		}
 
-		ret = do_splice_from(ipipe, out, off, len, flags);
+		ret = do_splice_from(ipipe, out, &offset, len, flags);
 
-		if (off_out && copy_to_user(off_out, off, sizeof(loff_t)))
+		if (!off_out)
+			out->f_pos = offset;
+		else if (copy_to_user(off_out, &offset, sizeof(loff_t)))
 			ret = -EFAULT;
 
 		return ret;
@@ -1443,13 +1509,15 @@ static long do_splice(struct file *in, loff_t __user *off_in,
 				return -EINVAL;
 			if (copy_from_user(&offset, off_in, sizeof(loff_t)))
 				return -EFAULT;
-			off = &offset;
-		} else
-			off = &in->f_pos;
+		} else {
+			offset = in->f_pos;
+		}
 
-		ret = do_splice_to(in, off, opipe, len, flags);
+		ret = do_splice_to(in, &offset, opipe, len, flags);
 
-		if (off_in && copy_to_user(off_in, off, sizeof(loff_t)))
+		if (!off_in)
+			in->f_pos = offset;
+		else if (copy_to_user(off_in, &offset, sizeof(loff_t)))
 			ret = -EFAULT;
 
 		return ret;
@@ -1467,7 +1535,7 @@ static long do_splice(struct file *in, loff_t __user *off_in,
  */
 static int get_iovec_page_array(const struct iovec __user *iov,
 				unsigned int nr_vecs, struct page **pages,
-				struct partial_page *partial, int aligned,
+				struct partial_page *partial, bool aligned,
 				unsigned int pipe_buffers)
 {
 	int buffers = 0, error = 0;
@@ -1691,11 +1759,14 @@ static long vmsplice_to_pipe(struct file *file, const struct iovec __user *iov,
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.partial = partial,
+<<<<<<< HEAD
                 /*
                  * kernel patch
                  * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
                  * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
                  */
+=======
+>>>>>>> v3.10.88
 		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.flags = flags,
 		.ops = &user_page_pipe_buf_ops,
@@ -1719,19 +1790,26 @@ static long vmsplice_to_pipe(struct file *file, const struct iovec __user *iov,
 	//				    spd.partial, flags & SPLICE_F_GIFT,
 	//				    pipe->buffers);
 	spd.nr_pages = get_iovec_page_array(iov, nr_segs, spd.pages,
+<<<<<<< HEAD
 					    spd.partial, flags & SPLICE_F_GIFT,
+=======
+					    spd.partial, false,
+>>>>>>> v3.10.88
 					    spd.nr_pages_max);
 	if (spd.nr_pages <= 0)
 		ret = spd.nr_pages;
 	else
 		ret = splice_to_pipe(pipe, &spd);
 
+<<<<<<< HEAD
         /*
          * kernel patch
          * commit: 2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064
          * https://android.googlesource.com/kernel/common/+/2c07f25ea7800adb36cd8da9b58c4ecd3fc3d064%5E!/#F0
          */
 	//splice_shrink_spd(pipe, &spd);
+=======
+>>>>>>> v3.10.88
 	splice_shrink_spd(&spd);
 	return ret;
 }
@@ -1755,9 +1833,8 @@ static long vmsplice_to_pipe(struct file *file, const struct iovec __user *iov,
 SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		unsigned long, nr_segs, unsigned int, flags)
 {
-	struct file *file;
+	struct fd f;
 	long error;
-	int fput;
 
 	if (unlikely(nr_segs > UIO_MAXIOV))
 		return -EINVAL;
@@ -1765,47 +1842,65 @@ SYSCALL_DEFINE4(vmsplice, int, fd, const struct iovec __user *, iov,
 		return 0;
 
 	error = -EBADF;
-	file = fget_light(fd, &fput);
-	if (file) {
-		if (file->f_mode & FMODE_WRITE)
-			error = vmsplice_to_pipe(file, iov, nr_segs, flags);
-		else if (file->f_mode & FMODE_READ)
-			error = vmsplice_to_user(file, iov, nr_segs, flags);
+	f = fdget(fd);
+	if (f.file) {
+		if (f.file->f_mode & FMODE_WRITE)
+			error = vmsplice_to_pipe(f.file, iov, nr_segs, flags);
+		else if (f.file->f_mode & FMODE_READ)
+			error = vmsplice_to_user(f.file, iov, nr_segs, flags);
 
-		fput_light(file, fput);
+		fdput(f);
 	}
 
 	return error;
 }
 
+#ifdef CONFIG_COMPAT
+COMPAT_SYSCALL_DEFINE4(vmsplice, int, fd, const struct compat_iovec __user *, iov32,
+		    unsigned int, nr_segs, unsigned int, flags)
+{
+	unsigned i;
+	struct iovec __user *iov;
+	if (nr_segs > UIO_MAXIOV)
+		return -EINVAL;
+	iov = compat_alloc_user_space(nr_segs * sizeof(struct iovec));
+	for (i = 0; i < nr_segs; i++) {
+		struct compat_iovec v;
+		if (get_user(v.iov_base, &iov32[i].iov_base) ||
+		    get_user(v.iov_len, &iov32[i].iov_len) ||
+		    put_user(compat_ptr(v.iov_base), &iov[i].iov_base) ||
+		    put_user(v.iov_len, &iov[i].iov_len))
+			return -EFAULT;
+	}
+	return sys_vmsplice(fd, iov, nr_segs, flags);
+}
+#endif
+
 SYSCALL_DEFINE6(splice, int, fd_in, loff_t __user *, off_in,
 		int, fd_out, loff_t __user *, off_out,
 		size_t, len, unsigned int, flags)
 {
+	struct fd in, out;
 	long error;
-	struct file *in, *out;
-	int fput_in, fput_out;
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
-	in = fget_light(fd_in, &fput_in);
-	if (in) {
-		if (in->f_mode & FMODE_READ) {
-			out = fget_light(fd_out, &fput_out);
-			if (out) {
-				if (out->f_mode & FMODE_WRITE)
-					error = do_splice(in, off_in,
-							  out, off_out,
+	in = fdget(fd_in);
+	if (in.file) {
+		if (in.file->f_mode & FMODE_READ) {
+			out = fdget(fd_out);
+			if (out.file) {
+				if (out.file->f_mode & FMODE_WRITE)
+					error = do_splice(in.file, off_in,
+							  out.file, off_out,
 							  len, flags);
-				fput_light(out, fput_out);
+				fdput(out);
 			}
 		}
-
-		fput_light(in, fput_in);
+		fdput(in);
 	}
-
 	return error;
 }
 
@@ -2116,26 +2211,25 @@ static long do_tee(struct file *in, struct file *out, size_t len,
 
 SYSCALL_DEFINE4(tee, int, fdin, int, fdout, size_t, len, unsigned int, flags)
 {
-	struct file *in;
-	int error, fput_in;
+	struct fd in;
+	int error;
 
 	if (unlikely(!len))
 		return 0;
 
 	error = -EBADF;
-	in = fget_light(fdin, &fput_in);
-	if (in) {
-		if (in->f_mode & FMODE_READ) {
-			int fput_out;
-			struct file *out = fget_light(fdout, &fput_out);
-
-			if (out) {
-				if (out->f_mode & FMODE_WRITE)
-					error = do_tee(in, out, len, flags);
-				fput_light(out, fput_out);
+	in = fdget(fdin);
+	if (in.file) {
+		if (in.file->f_mode & FMODE_READ) {
+			struct fd out = fdget(fdout);
+			if (out.file) {
+				if (out.file->f_mode & FMODE_WRITE)
+					error = do_tee(in.file, out.file,
+							len, flags);
+				fdput(out);
 			}
 		}
- 		fput_light(in, fput_in);
+ 		fdput(in);
  	}
 
 	return error;

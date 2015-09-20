@@ -154,6 +154,7 @@ static struct audit_chunk *alloc_chunk(int count)
 		chunk->owners[i].index = i;
 	}
 	fsnotify_init_mark(&chunk->mark, audit_tree_destroy_watch);
+	chunk->mark.mask = FS_IN_IGNORED;
 	return chunk;
 }
 
@@ -249,7 +250,11 @@ static void untag_chunk(struct node *p)
 		list_del_rcu(&chunk->hash);
 		spin_unlock(&hash_lock);
 		spin_unlock(&entry->lock);
+<<<<<<< HEAD
 		fsnotify_destroy_mark(entry);
+=======
+		fsnotify_destroy_mark(entry, audit_tree_group);
+>>>>>>> v3.10.88
 		goto out;
 	}
 
@@ -291,7 +296,12 @@ static void untag_chunk(struct node *p)
 		owner->root = new;
 	spin_unlock(&hash_lock);
 	spin_unlock(&entry->lock);
+<<<<<<< HEAD
 	fsnotify_destroy_mark(entry);
+=======
+	fsnotify_destroy_mark(entry, audit_tree_group);
+	fsnotify_put_mark(&new->mark);	/* drop initial reference */
+>>>>>>> v3.10.88
 	goto out;
 
 Fallback:
@@ -330,8 +340,12 @@ static int create_chunk(struct inode *inode, struct audit_tree *tree)
 		spin_unlock(&hash_lock);
 		chunk->dead = 1;
 		spin_unlock(&entry->lock);
+<<<<<<< HEAD
 		fsnotify_get_mark(entry);
 		fsnotify_destroy_mark(entry);
+=======
+		fsnotify_destroy_mark(entry, audit_tree_group);
+>>>>>>> v3.10.88
 		fsnotify_put_mark(entry);
 		return 0;
 	}
@@ -346,6 +360,7 @@ static int create_chunk(struct inode *inode, struct audit_tree *tree)
 	insert_hash(chunk);
 	spin_unlock(&hash_lock);
 	spin_unlock(&entry->lock);
+	fsnotify_put_mark(entry);	/* drop initial reference */
 	return 0;
 }
 
@@ -411,8 +426,12 @@ static int tag_chunk(struct inode *inode, struct audit_tree *tree)
 		spin_unlock(&chunk_entry->lock);
 		spin_unlock(&old_entry->lock);
 
+<<<<<<< HEAD
 		fsnotify_get_mark(chunk_entry);
 		fsnotify_destroy_mark(chunk_entry);
+=======
+		fsnotify_destroy_mark(chunk_entry, audit_tree_group);
+>>>>>>> v3.10.88
 
 		fsnotify_put_mark(chunk_entry);
 		fsnotify_put_mark(old_entry);
@@ -443,16 +462,32 @@ static int tag_chunk(struct inode *inode, struct audit_tree *tree)
 	spin_unlock(&hash_lock);
 	spin_unlock(&chunk_entry->lock);
 	spin_unlock(&old_entry->lock);
-	fsnotify_destroy_mark(old_entry);
+	fsnotify_destroy_mark(old_entry, audit_tree_group);
+	fsnotify_put_mark(chunk_entry);	/* drop initial reference */
 	fsnotify_put_mark(old_entry); /* pair to fsnotify_find mark_entry */
 	return 0;
+}
+
+static void audit_log_remove_rule(struct audit_krule *rule)
+{
+	struct audit_buffer *ab;
+
+	ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+	if (unlikely(!ab))
+		return;
+	audit_log_format(ab, "op=");
+	audit_log_string(ab, "remove rule");
+	audit_log_format(ab, " dir=");
+	audit_log_untrustedstring(ab, rule->tree->pathname);
+	audit_log_key(ab, rule->filterkey);
+	audit_log_format(ab, " list=%d res=1", rule->listnr);
+	audit_log_end(ab);
 }
 
 static void kill_rules(struct audit_tree *tree)
 {
 	struct audit_krule *rule, *next;
 	struct audit_entry *entry;
-	struct audit_buffer *ab;
 
 	list_for_each_entry_safe(rule, next, &tree->rules, rlist) {
 		entry = container_of(rule, struct audit_entry, rule);
@@ -460,14 +495,7 @@ static void kill_rules(struct audit_tree *tree)
 		list_del_init(&rule->rlist);
 		if (rule->tree) {
 			/* not a half-baked one */
-			ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
-			audit_log_format(ab, "op=");
-			audit_log_string(ab, "remove rule");
-			audit_log_format(ab, " dir=");
-			audit_log_untrustedstring(ab, rule->tree->pathname);
-			audit_log_key(ab, rule->filterkey);
-			audit_log_format(ab, " list=%d res=1", rule->listnr);
-			audit_log_end(ab);
+			audit_log_remove_rule(rule);
 			rule->tree = NULL;
 			list_del_rcu(&entry->list);
 			list_del(&entry->rule.list);
@@ -594,7 +622,7 @@ void audit_trim_trees(void)
 
 		root_mnt = collect_mounts(&path);
 		path_put(&path);
-		if (!root_mnt)
+		if (IS_ERR(root_mnt))
 			goto skip_it;
 
 		spin_lock(&hash_lock);
@@ -649,6 +677,7 @@ int audit_add_tree_rule(struct audit_krule *rule)
 	struct vfsmount *mnt;
 	int err;
 
+	rule->tree = NULL;
 	list_for_each_entry(tree, &tree_list, list) {
 		if (!strcmp(seed->pathname, tree->pathname)) {
 			put_tree(seed);
@@ -668,8 +697,8 @@ int audit_add_tree_rule(struct audit_krule *rule)
 		goto Err;
 	mnt = collect_mounts(&path);
 	path_put(&path);
-	if (!mnt) {
-		err = -ENOMEM;
+	if (IS_ERR(mnt)) {
+		err = PTR_ERR(mnt);
 		goto Err;
 	}
 
@@ -718,8 +747,8 @@ int audit_tag_tree(char *old, char *new)
 		return err;
 	tagged = collect_mounts(&path2);
 	path_put(&path2);
-	if (!tagged)
-		return -ENOMEM;
+	if (IS_ERR(tagged))
+		return PTR_ERR(tagged);
 
 	err = kern_path(old, 0, &path1);
 	if (err) {
@@ -915,7 +944,12 @@ static void audit_tree_freeing_mark(struct fsnotify_mark *entry, struct fsnotify
 	struct audit_chunk *chunk = container_of(entry, struct audit_chunk, mark);
 
 	evict_chunk(chunk);
-	fsnotify_put_mark(entry);
+
+	/*
+	 * We are guaranteed to have at least one reference to the mark from
+	 * either the inode or the caller of fsnotify_destroy_mark().
+	 */
+	BUG_ON(atomic_read(&entry->refcnt) < 1);
 }
 
 static bool audit_tree_send_event(struct fsnotify_group *group, struct inode *inode,

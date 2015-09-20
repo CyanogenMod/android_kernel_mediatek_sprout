@@ -188,6 +188,7 @@ static void speedstep_set_state(unsigned int state)
 		return;
 
 	/* Disable IRQs */
+	preempt_disable();
 	local_irq_save(flags);
 
 	command = (smi_sig & 0xffffff00) | (smi_cmd & 0xff);
@@ -198,9 +199,19 @@ static void speedstep_set_state(unsigned int state)
 
 	do {
 		if (retry) {
+			/*
+			 * We need to enable interrupts, otherwise the blockage
+			 * won't resolve.
+			 *
+			 * We disable preemption so that other processes don't
+			 * run. If other processes were running, they could
+			 * submit more DMA requests, making the blockage worse.
+			 */
 			pr_debug("retry %u, previous result %u, waiting...\n",
 					retry, result);
+			local_irq_enable();
 			mdelay(retry * 50);
+			local_irq_disable();
 		}
 		retry++;
 		__asm__ __volatile__(
@@ -217,6 +228,7 @@ static void speedstep_set_state(unsigned int state)
 
 	/* enable IRQs */
 	local_irq_restore(flags);
+	preempt_enable();
 
 	if (new_state == state)
 		pr_debug("change to %u MHz succeeded after %u tries "
@@ -252,14 +264,13 @@ static int speedstep_target(struct cpufreq_policy *policy,
 
 	freqs.old = speedstep_freqs[speedstep_get_state()].frequency;
 	freqs.new = speedstep_freqs[newstate].frequency;
-	freqs.cpu = 0; /* speedstep.c is UP only driver */
 
 	if (freqs.old == freqs.new)
 		return 0;
 
-	cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
+	cpufreq_notify_transition(policy, &freqs, CPUFREQ_PRECHANGE);
 	speedstep_set_state(newstate);
-	cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
+	cpufreq_notify_transition(policy, &freqs, CPUFREQ_POSTCHANGE);
 
 	return 0;
 }

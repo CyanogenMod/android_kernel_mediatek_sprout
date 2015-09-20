@@ -31,6 +31,8 @@
 #define DWMAC_LIB_DBG(fmt, args...)  do { } while (0)
 #endif
 
+#define GMAC_HI_REG_AE		0x80000000
+
 /* CSR1 enables the transmit DMA to check for new descriptor */
 void dwmac_enable_dma_transmission(void __iomem *ioaddr)
 {
@@ -202,16 +204,28 @@ int dwmac_dma_interrupt(void __iomem *ioaddr,
 		}
 	}
 	/* TX/RX NORMAL interrupts */
-	if (intr_status & DMA_STATUS_NIS) {
+	if (likely(intr_status & DMA_STATUS_NIS)) {
 		x->normal_irq_n++;
-		if (likely((intr_status & DMA_STATUS_RI) ||
-			 (intr_status & (DMA_STATUS_TI))))
-				ret = handle_tx_rx;
+		if (likely(intr_status & DMA_STATUS_RI)) {
+			u32 value = readl(ioaddr + DMA_INTR_ENA);
+			/* to schedule NAPI on real RIE event. */
+			if (likely(value & DMA_INTR_ENA_RIE)) {
+				x->rx_normal_irq_n++;
+				ret |= handle_rx;
+			}
+		}
+		if (likely(intr_status & DMA_STATUS_TI)) {
+			x->tx_normal_irq_n++;
+			ret |= handle_tx;
+		}
+		if (unlikely(intr_status & DMA_STATUS_ERI))
+			x->rx_early_irq++;
 	}
 	/* Optional hardware blocks, interrupts should be disabled */
 	if (unlikely(intr_status &
 		     (DMA_STATUS_GPI | DMA_STATUS_GMI | DMA_STATUS_GLI)))
 		pr_info("%s: unexpected status %08x\n", __func__, intr_status);
+
 	/* Clear the interrupt by writing a logic 1 to the CSR5[15-0] */
 	writel((intr_status & 0x1ffff), ioaddr + DMA_STATUS);
 
@@ -233,7 +247,11 @@ void stmmac_set_mac_addr(void __iomem *ioaddr, u8 addr[6],
 	unsigned long data;
 
 	data = (addr[5] << 8) | addr[4];
-	writel(data, ioaddr + high);
+	/* For MAC Addr registers se have to set the Address Enable (AE)
+	 * bit that has no effect on the High Reg 0 where the bit 31 (MO)
+	 * is RO.
+	 */
+	writel(data | GMAC_HI_REG_AE, ioaddr + high);
 	data = (addr[3] << 24) | (addr[2] << 16) | (addr[1] << 8) | addr[0];
 	writel(data, ioaddr + low);
 }

@@ -24,7 +24,11 @@ struct vmpressure {
 
 struct mem_cgroup;
 
+<<<<<<< HEAD
 #ifdef CONFIG_CGROUP_MEM_RES_CTLR
+=======
+#ifdef CONFIG_MEMCG
+>>>>>>> v3.10.88
 extern void vmpressure(gfp_t gfp, struct mem_cgroup *memcg,
 		       unsigned long scanned, unsigned long reclaimed);
 extern void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg, int prio);
@@ -43,5 +47,9 @@ static inline void vmpressure(gfp_t gfp, struct mem_cgroup *memcg,
 			      unsigned long scanned, unsigned long reclaimed) {}
 static inline void vmpressure_prio(gfp_t gfp, struct mem_cgroup *memcg,
 				   int prio) {}
+<<<<<<< HEAD
 #endif /* CONFIG_CGROUP_MEM_RES_CTLR */
+=======
+#endif /* CONFIG_MEMCG */
+>>>>>>> v3.10.88
 #endif /* __LINUX_VMPRESSURE_H */

@@ -1,7 +1,7 @@
 /*
  *  Ptrace user space interface.
  *
- *    Copyright IBM Corp. 1999,2010
+ *    Copyright IBM Corp. 1999, 2010
  *    Author(s): Denis Joseph Barrow
  *               Martin Schwidefsky (schwidefsky@de.ibm.com)
  */
@@ -42,6 +42,7 @@ enum s390_regset {
 	REGSET_GENERAL,
 	REGSET_FP,
 	REGSET_LAST_BREAK,
+	REGSET_TDB,
 	REGSET_SYSTEM_CALL,
 	REGSET_GENERAL_EXTENDED,
 };
@@ -52,6 +53,22 @@ void update_per_regs(struct task_struct *task)
 	struct thread_struct *thread = &task->thread;
 	struct per_regs old, new;
 
+#ifdef CONFIG_64BIT
+	/* Take care of the enable/disable of transactional execution. */
+	if (MACHINE_HAS_TE) {
+		unsigned long cr0, cr0_new;
+
+		__ctl_store(cr0, 0, 0);
+		/* set or clear transaction execution bits 8 and 9. */
+		if (task->thread.per_flags & PER_FLAG_NO_TE)
+			cr0_new = cr0 & ~(3UL << 54);
+		else
+			cr0_new = cr0 | (3UL << 54);
+		/* Only load control register 0 if necessary. */
+		if (cr0 != cr0_new)
+			__ctl_load(cr0_new, 0, 0);
+	}
+#endif
 	/* Copy user specified PER registers */
 	new.control = thread->per_user.control;
 	new.start = thread->per_user.start;
@@ -60,6 +77,10 @@ void update_per_regs(struct task_struct *task)
 	/* merge TIF_SINGLE_STEP into user specified PER registers. */
 	if (test_tsk_thread_flag(task, TIF_SINGLE_STEP)) {
 		new.control |= PER_EVENT_IFETCH;
+#ifdef CONFIG_64BIT
+		new.control |= PER_CONTROL_SUSPENSION;
+		new.control |= PER_EVENT_TRANSACTION_END;
+#endif
 		new.start = 0;
 		new.end = PSW_ADDR_INSN;
 	}
@@ -100,6 +121,7 @@ void ptrace_disable(struct task_struct *task)
 	memset(&task->thread.per_event, 0, sizeof(task->thread.per_event));
 	clear_tsk_thread_flag(task, TIF_SINGLE_STEP);
 	clear_tsk_thread_flag(task, TIF_PER_TRAP);
+	task->thread.per_flags = 0;
 }
 
 #ifndef CONFIG_64BIT
@@ -292,7 +314,9 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 		 * psw and gprs are stored on the stack
 		 */
 		if (addr == (addr_t) &dummy->regs.psw.mask &&
-		    ((data & ~PSW_MASK_USER) != psw_user_bits ||
+		    (((data^psw_user_bits) & ~PSW_MASK_USER) ||
+		     (((data^psw_user_bits) & PSW_MASK_ASC) &&
+		      ((data|psw_user_bits) & PSW_MASK_ASC) == PSW_MASK_ASC) ||
 		     ((data & PSW_MASK_EA) && !(data & PSW_MASK_BA))))
 			/* Invalid psw mask. */
 			return -EINVAL;
@@ -415,6 +439,16 @@ long arch_ptrace(struct task_struct *child, long request,
 	case PTRACE_GET_LAST_BREAK:
 		put_user(task_thread_info(child)->last_break,
 			 (unsigned long __user *) data);
+		return 0;
+	case PTRACE_ENABLE_TE:
+		if (!MACHINE_HAS_TE)
+			return -EIO;
+		child->thread.per_flags &= ~PER_FLAG_NO_TE;
+		return 0;
+	case PTRACE_DISABLE_TE:
+		if (!MACHINE_HAS_TE)
+			return -EIO;
+		child->thread.per_flags |= PER_FLAG_NO_TE;
 		return 0;
 	default:
 		/* Removing high order bit from addr (only for 31 bit). */
@@ -595,7 +629,10 @@ static int __poke_user_compat(struct task_struct *child,
 		 */
 		if (addr == (addr_t) &dummy32->regs.psw.mask) {
 			/* Build a 64 bit psw mask from 31 bit mask. */
-			if ((tmp & ~PSW32_MASK_USER) != psw32_user_bits)
+			if (((tmp^psw32_user_bits) & ~PSW32_MASK_USER) ||
+			    (((tmp^psw32_user_bits) & PSW32_MASK_ASC) &&
+			     ((tmp|psw32_user_bits) & PSW32_MASK_ASC)
+			     == PSW32_MASK_ASC))
 				/* Invalid psw mask. */
 				return -EINVAL;
 			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_USER) |
@@ -719,7 +756,11 @@ asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
 	long ret = 0;
 
 	/* Do the secure computing check first. */
-	secure_computing(regs->gprs[2]);
+	if (secure_computing(regs->gprs[2])) {
+		/* seccomp failures shouldn't expose any additional code. */
+		ret = -1;
+		goto out;
+	}
 
 	/*
 	 * The sysc_tracesys code in entry.S stored the system
@@ -745,6 +786,7 @@ asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
 			    regs->gprs[2], regs->orig_gpr2,
 			    regs->gprs[3], regs->gprs[4],
 			    regs->gprs[5]);
+out:
 	return ret ?: regs->gprs[2];
 }
 
@@ -898,6 +940,28 @@ static int s390_last_break_set(struct task_struct *target,
 	return 0;
 }
 
+static int s390_tdb_get(struct task_struct *target,
+			const struct user_regset *regset,
+			unsigned int pos, unsigned int count,
+			void *kbuf, void __user *ubuf)
+{
+	struct pt_regs *regs = task_pt_regs(target);
+	unsigned char *data;
+
+	if (!(regs->int_code & 0x200))
+		return -ENODATA;
+	data = target->thread.trap_tdb;
+	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, data, 0, 256);
+}
+
+static int s390_tdb_set(struct task_struct *target,
+			const struct user_regset *regset,
+			unsigned int pos, unsigned int count,
+			const void *kbuf, const void __user *ubuf)
+{
+	return 0;
+}
+
 #endif
 
 static int s390_system_call_get(struct task_struct *target,
@@ -945,6 +1009,14 @@ static const struct user_regset s390_regsets[] = {
 		.align = sizeof(long),
 		.get = s390_last_break_get,
 		.set = s390_last_break_set,
+	},
+	[REGSET_TDB] = {
+		.core_note_type = NT_S390_TDB,
+		.n = 1,
+		.size = 256,
+		.align = 1,
+		.get = s390_tdb_get,
+		.set = s390_tdb_set,
 	},
 #endif
 	[REGSET_SYSTEM_CALL] = {
@@ -1142,6 +1214,14 @@ static const struct user_regset s390_compat_regsets[] = {
 		.align = sizeof(long),
 		.get = s390_compat_last_break_get,
 		.set = s390_compat_last_break_set,
+	},
+	[REGSET_TDB] = {
+		.core_note_type = NT_S390_TDB,
+		.n = 1,
+		.size = 256,
+		.align = 1,
+		.get = s390_tdb_get,
+		.set = s390_tdb_set,
 	},
 	[REGSET_SYSTEM_CALL] = {
 		.core_note_type = NT_S390_SYSTEM_CALL,

@@ -29,7 +29,12 @@
 #define EFI_UNSUPPORTED		( 3 | (1UL << (BITS_PER_LONG-1)))
 #define EFI_BAD_BUFFER_SIZE     ( 4 | (1UL << (BITS_PER_LONG-1)))
 #define EFI_BUFFER_TOO_SMALL	( 5 | (1UL << (BITS_PER_LONG-1)))
+#define EFI_NOT_READY		( 6 | (1UL << (BITS_PER_LONG-1)))
+#define EFI_DEVICE_ERROR	( 7 | (1UL << (BITS_PER_LONG-1)))
+#define EFI_WRITE_PROTECTED	( 8 | (1UL << (BITS_PER_LONG-1)))
+#define EFI_OUT_OF_RESOURCES	( 9 | (1UL << (BITS_PER_LONG-1)))
 #define EFI_NOT_FOUND		(14 | (1UL << (BITS_PER_LONG-1)))
+#define EFI_SECURITY_VIOLATION	(26 | (1UL << (BITS_PER_LONG-1)))
 
 typedef unsigned long efi_status_t;
 typedef u8 efi_bool_t;
@@ -196,6 +201,77 @@ typedef struct {
 	void *create_event_ex;
 } efi_boot_services_t;
 
+typedef enum {
+	EfiPciIoWidthUint8,
+	EfiPciIoWidthUint16,
+	EfiPciIoWidthUint32,
+	EfiPciIoWidthUint64,
+	EfiPciIoWidthFifoUint8,
+	EfiPciIoWidthFifoUint16,
+	EfiPciIoWidthFifoUint32,
+	EfiPciIoWidthFifoUint64,
+	EfiPciIoWidthFillUint8,
+	EfiPciIoWidthFillUint16,
+	EfiPciIoWidthFillUint32,
+	EfiPciIoWidthFillUint64,
+	EfiPciIoWidthMaximum
+} EFI_PCI_IO_PROTOCOL_WIDTH;
+
+typedef enum {
+	EfiPciIoAttributeOperationGet,
+	EfiPciIoAttributeOperationSet,
+	EfiPciIoAttributeOperationEnable,
+	EfiPciIoAttributeOperationDisable,
+	EfiPciIoAttributeOperationSupported,
+    EfiPciIoAttributeOperationMaximum
+} EFI_PCI_IO_PROTOCOL_ATTRIBUTE_OPERATION;
+
+
+typedef struct {
+	void *read;
+	void *write;
+} efi_pci_io_protocol_access_t;
+
+typedef struct {
+	void *poll_mem;
+	void *poll_io;
+	efi_pci_io_protocol_access_t mem;
+	efi_pci_io_protocol_access_t io;
+	efi_pci_io_protocol_access_t pci;
+	void *copy_mem;
+	void *map;
+	void *unmap;
+	void *allocate_buffer;
+	void *free_buffer;
+	void *flush;
+	void *get_location;
+	void *attributes;
+	void *get_bar_attributes;
+	void *set_bar_attributes;
+	uint64_t romsize;
+	void *romimage;
+} efi_pci_io_protocol;
+
+#define EFI_PCI_IO_ATTRIBUTE_ISA_MOTHERBOARD_IO 0x0001
+#define EFI_PCI_IO_ATTRIBUTE_ISA_IO 0x0002
+#define EFI_PCI_IO_ATTRIBUTE_VGA_PALETTE_IO 0x0004
+#define EFI_PCI_IO_ATTRIBUTE_VGA_MEMORY 0x0008
+#define EFI_PCI_IO_ATTRIBUTE_VGA_IO 0x0010
+#define EFI_PCI_IO_ATTRIBUTE_IDE_PRIMARY_IO 0x0020
+#define EFI_PCI_IO_ATTRIBUTE_IDE_SECONDARY_IO 0x0040
+#define EFI_PCI_IO_ATTRIBUTE_MEMORY_WRITE_COMBINE 0x0080
+#define EFI_PCI_IO_ATTRIBUTE_IO 0x0100
+#define EFI_PCI_IO_ATTRIBUTE_MEMORY 0x0200
+#define EFI_PCI_IO_ATTRIBUTE_BUS_MASTER 0x0400
+#define EFI_PCI_IO_ATTRIBUTE_MEMORY_CACHED 0x0800
+#define EFI_PCI_IO_ATTRIBUTE_MEMORY_DISABLE 0x1000
+#define EFI_PCI_IO_ATTRIBUTE_EMBEDDED_DEVICE 0x2000
+#define EFI_PCI_IO_ATTRIBUTE_EMBEDDED_ROM 0x4000
+#define EFI_PCI_IO_ATTRIBUTE_DUAL_ADDRESS_CYCLE 0x8000
+#define EFI_PCI_IO_ATTRIBUTE_ISA_IO_16 0x10000
+#define EFI_PCI_IO_ATTRIBUTE_VGA_PALETTE_IO_16 0x20000
+#define EFI_PCI_IO_ATTRIBUTE_VGA_IO_16 0x40000
+
 /*
  * Types and defines for EFI ResetSystem
  */
@@ -257,6 +333,7 @@ typedef efi_status_t efi_query_capsule_caps_t(efi_capsule_header_t **capsules,
 					      unsigned long count,
 					      u64 *max_size,
 					      int *reset_type);
+typedef efi_status_t efi_query_variable_store_t(u32 attributes, unsigned long size);
 
 /*
  *  EFI Configuration Table and GUID definitions
@@ -497,10 +574,26 @@ extern void efi_memmap_walk (efi_freemem_callback_t callback, void *arg);
 extern void efi_gettimeofday (struct timespec *ts);
 extern void efi_enter_virtual_mode (void);	/* switch EFI to virtual mode, if possible */
 #ifdef CONFIG_X86
+<<<<<<< HEAD
 extern void efi_free_boot_services(void);
 #else
 static inline void efi_free_boot_services(void) {}
 #endif
+=======
+extern void efi_late_init(void);
+extern void efi_free_boot_services(void);
+extern efi_status_t efi_query_variable_store(u32 attributes, unsigned long size);
+#else
+static inline void efi_late_init(void) {}
+static inline void efi_free_boot_services(void) {}
+
+static inline efi_status_t efi_query_variable_store(u32 attributes, unsigned long size)
+{
+	return EFI_SUCCESS;
+}
+#endif
+extern void __iomem *efi_lookup_mapped_addr(u64 phys_addr);
+>>>>>>> v3.10.88
 extern u64 efi_get_iobase (void);
 extern u32 efi_mem_type (unsigned long phys_addr);
 extern u64 efi_mem_attributes (unsigned long phys_addr);
@@ -584,6 +677,12 @@ static inline int efi_enabled(int facility)
 				EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS | \
 				EFI_VARIABLE_APPEND_WRITE)
 /*
+ * Length of a GUID string (strlen("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+ * not including trailing NUL
+ */
+#define EFI_VARIABLE_GUID_LEN 36
+
+/*
  * The type of search to perform when calling boottime->locate_handle
  */
 #define EFI_LOCATE_ALL_HANDLES			0
@@ -640,7 +739,6 @@ static inline void memrange_efi_to_native(u64 *addr, u64 *npages)
 	*addr &= PAGE_MASK;
 }
 
-#if defined(CONFIG_EFI_VARS) || defined(CONFIG_EFI_VARS_MODULE)
 /*
  * EFI Variable support.
  *
@@ -652,6 +750,7 @@ struct efivar_operations {
 	efi_get_variable_t *get_variable;
 	efi_get_next_variable_t *get_next_variable;
 	efi_set_variable_t *set_variable;
+	efi_query_variable_store_t *query_variable_store;
 };
 
 struct efivars {
@@ -660,22 +759,93 @@ struct efivars {
 	 * 1) ->list - adds, removals, reads, writes
 	 * 2) ops.[gs]et_variable() calls.
 	 * It must not be held when creating sysfs entries or calling kmalloc.
-	 * ops.get_next_variable() is only called from register_efivars(),
+	 * ops.get_next_variable() is only called from register_efivars()
+	 * or efivar_update_sysfs_entries(),
 	 * which is protected by the BKL, so that path is safe.
 	 */
 	spinlock_t lock;
-	struct list_head list;
 	struct kset *kset;
-	struct bin_attribute *new_var, *del_var;
+	struct kobject *kobject;
 	const struct efivar_operations *ops;
-	struct efivar_entry *walk_entry;
-	struct pstore_info efi_pstore_info;
 };
 
-int register_efivars(struct efivars *efivars,
+/*
+ * The maximum size of VariableName + Data = 1024
+ * Therefore, it's reasonable to save that much
+ * space in each part of the structure,
+ * and we use a page for reading/writing.
+ */
+
+struct efi_variable {
+	efi_char16_t  VariableName[1024/sizeof(efi_char16_t)];
+	efi_guid_t    VendorGuid;
+	unsigned long DataSize;
+	__u8          Data[1024];
+	efi_status_t  Status;
+	__u32         Attributes;
+} __attribute__((packed));
+
+struct efivar_entry {
+	struct efi_variable var;
+	struct list_head list;
+	struct kobject kobj;
+};
+
+extern struct list_head efivar_sysfs_list;
+
+static inline void
+efivar_unregister(struct efivar_entry *var)
+{
+	kobject_put(&var->kobj);
+}
+
+int efivars_register(struct efivars *efivars,
 		     const struct efivar_operations *ops,
-		     struct kobject *parent_kobj);
-void unregister_efivars(struct efivars *efivars);
+		     struct kobject *kobject);
+int efivars_unregister(struct efivars *efivars);
+struct kobject *efivars_kobject(void);
+
+int efivar_init(int (*func)(efi_char16_t *, efi_guid_t, unsigned long, void *),
+		void *data, bool atomic, bool duplicates,
+		struct list_head *head);
+
+void efivar_entry_add(struct efivar_entry *entry, struct list_head *head);
+void efivar_entry_remove(struct efivar_entry *entry);
+
+int __efivar_entry_delete(struct efivar_entry *entry);
+int efivar_entry_delete(struct efivar_entry *entry);
+
+int efivar_entry_size(struct efivar_entry *entry, unsigned long *size);
+int __efivar_entry_get(struct efivar_entry *entry, u32 *attributes,
+		       unsigned long *size, void *data);
+int efivar_entry_get(struct efivar_entry *entry, u32 *attributes,
+		     unsigned long *size, void *data);
+int efivar_entry_set(struct efivar_entry *entry, u32 attributes,
+		     unsigned long size, void *data, struct list_head *head);
+int efivar_entry_set_get_size(struct efivar_entry *entry, u32 attributes,
+			      unsigned long *size, void *data, bool *set);
+int efivar_entry_set_safe(efi_char16_t *name, efi_guid_t vendor, u32 attributes,
+			  bool block, unsigned long size, void *data);
+
+void efivar_entry_iter_begin(void);
+void efivar_entry_iter_end(void);
+
+int __efivar_entry_iter(int (*func)(struct efivar_entry *, void *),
+			struct list_head *head, void *data,
+			struct efivar_entry **prev);
+int efivar_entry_iter(int (*func)(struct efivar_entry *, void *),
+		      struct list_head *head, void *data);
+
+struct efivar_entry *efivar_entry_find(efi_char16_t *name, efi_guid_t guid,
+				       struct list_head *head, bool remove);
+
+bool efivar_validate(struct efi_variable *var, u8 *data, unsigned long len);
+
+extern struct work_struct efivar_work;
+void efivar_run_worker(void);
+
+#if defined(CONFIG_EFI_VARS) || defined(CONFIG_EFI_VARS_MODULE)
+int efivars_sysfs_init(void);
 
 #endif /* CONFIG_EFI_VARS */
 

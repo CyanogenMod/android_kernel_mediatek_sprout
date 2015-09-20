@@ -37,7 +37,10 @@ static struct srcu_struct srcu;
 void __mmu_notifier_release(struct mm_struct *mm)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *node;
+=======
+>>>>>>> v3.10.88
 	int id;
 
 	/*
@@ -45,7 +48,11 @@ void __mmu_notifier_release(struct mm_struct *mm)
 	 * ->release returns.
 	 */
 	id = srcu_read_lock(&srcu);
+<<<<<<< HEAD
 	hlist_for_each_entry_rcu(mn, node, &mm->mmu_notifier_mm->list, hlist)
+=======
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist)
+>>>>>>> v3.10.88
 		/*
 		 * If ->release runs before mmu_notifier_unregister it must be
 		 * handled, as it's the only way for the driver to flush all
@@ -92,11 +99,18 @@ int __mmu_notifier_clear_flush_young(struct mm_struct *mm,
 					unsigned long address)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *n;
 	int young = 0, id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
+=======
+	int young = 0, id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+>>>>>>> v3.10.88
 		if (mn->ops->clear_flush_young)
 			young |= mn->ops->clear_flush_young(mn, mm, address);
 	}
@@ -109,11 +123,18 @@ int __mmu_notifier_test_young(struct mm_struct *mm,
 			      unsigned long address)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *n;
 	int young = 0, id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
+=======
+	int young = 0, id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+>>>>>>> v3.10.88
 		if (mn->ops->test_young) {
 			young = mn->ops->test_young(mn, mm, address);
 			if (young)
@@ -129,19 +150,20 @@ void __mmu_notifier_change_pte(struct mm_struct *mm, unsigned long address,
 			       pte_t pte)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *n;
 	int id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
+=======
+	int id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+>>>>>>> v3.10.88
 		if (mn->ops->change_pte)
 			mn->ops->change_pte(mn, mm, address, pte);
-		/*
-		 * Some drivers don't have change_pte,
-		 * so we must call invalidate_page in that case.
-		 */
-		else if (mn->ops->invalidate_page)
-			mn->ops->invalidate_page(mn, mm, address);
 	}
 	srcu_read_unlock(&srcu, id);
 }
@@ -150,11 +172,18 @@ void __mmu_notifier_invalidate_page(struct mm_struct *mm,
 					  unsigned long address)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *n;
 	int id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
+=======
+	int id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+>>>>>>> v3.10.88
 		if (mn->ops->invalidate_page)
 			mn->ops->invalidate_page(mn, mm, address);
 	}
@@ -165,31 +194,47 @@ void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 				  unsigned long start, unsigned long end)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *n;
 	int id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
+=======
+	int id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+>>>>>>> v3.10.88
 		if (mn->ops->invalidate_range_start)
 			mn->ops->invalidate_range_start(mn, mm, start, end);
 	}
 	srcu_read_unlock(&srcu, id);
 }
+EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_start);
 
 void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
 				  unsigned long start, unsigned long end)
 {
 	struct mmu_notifier *mn;
+<<<<<<< HEAD
 	struct hlist_node *n;
 	int id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
+=======
+	int id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+>>>>>>> v3.10.88
 		if (mn->ops->invalidate_range_end)
 			mn->ops->invalidate_range_end(mn, mm, start, end);
 	}
 	srcu_read_unlock(&srcu, id);
 }
+EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_end);
 
 static int do_mmu_notifier_register(struct mmu_notifier *mn,
 				    struct mm_struct *mm,
@@ -201,9 +246,15 @@ static int do_mmu_notifier_register(struct mmu_notifier *mn,
 	BUG_ON(atomic_read(&mm->mm_users) <= 0);
 
 	/*
+<<<<<<< HEAD
 	* Verify that mmu_notifier_init() already run and the global srcu is
 	* initialized.
 	*/
+=======
+	 * Verify that mmu_notifier_init() already run and the global srcu is
+	 * initialized.
+	 */
+>>>>>>> v3.10.88
 	BUG_ON(!srcu.per_cpu_ref);
 
 	ret = -ENOMEM;
@@ -215,11 +266,12 @@ static int do_mmu_notifier_register(struct mmu_notifier *mn,
 		down_write(&mm->mmap_sem);
 	ret = mm_take_all_locks(mm);
 	if (unlikely(ret))
-		goto out_cleanup;
+		goto out_clean;
 
 	if (!mm_has_notifiers(mm)) {
 		INIT_HLIST_HEAD(&mmu_notifier_mm->list);
 		spin_lock_init(&mmu_notifier_mm->lock);
+
 		mm->mmu_notifier_mm = mmu_notifier_mm;
 		mmu_notifier_mm = NULL;
 	}
@@ -238,10 +290,9 @@ static int do_mmu_notifier_register(struct mmu_notifier *mn,
 	spin_unlock(&mm->mmu_notifier_mm->lock);
 
 	mm_drop_all_locks(mm);
-out_cleanup:
+out_clean:
 	if (take_mmap_sem)
 		up_write(&mm->mmap_sem);
-	/* kfree() does nothing if mmu_notifier_mm is NULL */
 	kfree(mmu_notifier_mm);
 out:
 	BUG_ON(atomic_read(&mm->mm_users) <= 0);

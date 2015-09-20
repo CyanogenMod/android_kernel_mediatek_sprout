@@ -42,11 +42,11 @@
 #include <mach/pxa27x.h>
 #include <mach/pxa27x-udc.h>
 #include <mach/audio.h>
-#include <mach/pxafb.h>
-#include <mach/ohci.h>
-#include <mach/mmc.h>
-#include <plat/pxa27x_keypad.h>
-#include <mach/camera.h>
+#include <linux/platform_data/video-pxafb.h>
+#include <linux/platform_data/usb-ohci-pxa27x.h>
+#include <linux/platform_data/mmc-pxamci.h>
+#include <linux/platform_data/keypad-pxa27x.h>
+#include <linux/platform_data/camera-pxa.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -338,8 +338,6 @@ static struct mtd_partition em_x270_partition_info[] = {
 	},
 };
 
-static const char *em_x270_part_probes[] = { "cmdlinepart", NULL };
-
 struct platform_nand_data em_x270_nand_platdata = {
 	.chip = {
 		.nr_chips = 1,
@@ -347,7 +345,6 @@ struct platform_nand_data em_x270_nand_platdata = {
 		.nr_partitions = ARRAY_SIZE(em_x270_partition_info),
 		.partitions = em_x270_partition_info,
 		.chip_delay = 20,
-		.part_probe_types = em_x270_part_probes,
 	},
 	.ctrl = {
 		.hwcontrol = 0,
@@ -1085,10 +1082,7 @@ static void __init em_x270_userspace_consumers_init(void)
 /* DA9030 related initializations */
 #define REGULATOR_CONSUMER(_name, _dev_name, _supply)		        \
 	static struct regulator_consumer_supply _name##_consumers[] = {	\
-		{							\
-			.dev_name = _dev_name,				\
-			.supply = _supply,				\
-		},							\
+		REGULATOR_SUPPLY(_supply, _dev_name),			\
 	}
 
 REGULATOR_CONSUMER(ldo3, "reg-userspace-consumer.0", "vcc gps");
@@ -1304,7 +1298,7 @@ MACHINE_START(EM_X270, "Compulab EM-X270")
 	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa27x_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= em_x270_init,
 	.restart	= pxa_restart,
 MACHINE_END
@@ -1315,7 +1309,7 @@ MACHINE_START(EXEDA, "Compulab eXeda")
 	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa27x_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= em_x270_init,
 	.restart	= pxa_restart,
 MACHINE_END

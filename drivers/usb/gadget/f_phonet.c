@@ -301,7 +301,7 @@ pn_rx_submit(struct f_phonet *fp, struct usb_request *req, gfp_t gfp_flags)
 	struct page *page;
 	int err;
 
-	page = alloc_page(gfp_flags);
+	page = __skb_alloc_page(gfp_flags | __GFP_NOMEMALLOC, NULL);
 	if (!page)
 		return -ENOMEM;
 
@@ -515,14 +515,14 @@ int pn_bind(struct usb_configuration *c, struct usb_function *f)
 	fp->in_ep = ep;
 	ep->driver_data = fp; /* Claim */
 
-	pn_hs_sink_desc.bEndpointAddress =
-		pn_fs_sink_desc.bEndpointAddress;
-	pn_hs_source_desc.bEndpointAddress =
-		pn_fs_source_desc.bEndpointAddress;
+	pn_hs_sink_desc.bEndpointAddress = pn_fs_sink_desc.bEndpointAddress;
+	pn_hs_source_desc.bEndpointAddress = pn_fs_source_desc.bEndpointAddress;
 
 	/* Do not try to bind Phonet twice... */
-	fp->function.descriptors = fs_pn_function;
-	fp->function.hs_descriptors = hs_pn_function;
+	status = usb_assign_descriptors(f, fs_pn_function, hs_pn_function,
+			NULL);
+	if (status)
+		goto err;
 
 	/* Incoming USB requests */
 	status = -ENOMEM;
@@ -551,7 +551,11 @@ err_req:
 	for (i = 0; i < phonet_rxq_size && fp->out_reqv[i]; i++)
 		usb_ep_free_request(fp->out_ep, fp->out_reqv[i]);
 err:
+<<<<<<< HEAD
 
+=======
+	usb_free_all_descriptors(f);
+>>>>>>> v3.10.88
 	if (fp->out_ep)
 		fp->out_ep->driver_data = NULL;
 	if (fp->in_ep)
@@ -573,6 +577,7 @@ pn_unbind(struct usb_configuration *c, struct usb_function *f)
 		if (fp->out_reqv[i])
 			usb_ep_free_request(fp->out_ep, fp->out_reqv[i]);
 
+	usb_free_all_descriptors(f);
 	kfree(fp);
 }
 

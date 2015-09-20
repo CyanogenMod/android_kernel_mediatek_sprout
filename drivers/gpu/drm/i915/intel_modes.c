@@ -27,36 +27,25 @@
 #include <linux/i2c.h>
 #include <linux/fb.h>
 #include <drm/drm_edid.h>
-#include "drmP.h"
-#include "drm_edid.h"
+#include <drm/drmP.h>
 #include "intel_drv.h"
 #include "i915_drv.h"
 
 /**
- * intel_ddc_probe
- *
+ * intel_connector_update_modes - update connector from edid
+ * @connector: DRM connector device to use
+ * @edid: previously read EDID information
  */
-bool intel_ddc_probe(struct intel_encoder *intel_encoder, int ddc_bus)
+int intel_connector_update_modes(struct drm_connector *connector,
+				struct edid *edid)
 {
-	struct drm_i915_private *dev_priv = intel_encoder->base.dev->dev_private;
-	u8 out_buf[] = { 0x0, 0x0};
-	u8 buf[2];
-	struct i2c_msg msgs[] = {
-		{
-			.addr = DDC_ADDR,
-			.flags = 0,
-			.len = 1,
-			.buf = out_buf,
-		},
-		{
-			.addr = DDC_ADDR,
-			.flags = I2C_M_RD,
-			.len = 1,
-			.buf = buf,
-		}
-	};
+	int ret;
 
-	return i2c_transfer(&dev_priv->gmbus[ddc_bus].adapter, msgs, 2) == 2;
+	drm_mode_connector_update_edid_property(connector, edid);
+	ret = drm_add_edid_modes(connector, edid);
+	drm_edid_to_eld(connector, edid);
+
+	return ret;
 }
 
 /**
@@ -89,10 +78,20 @@ int intel_ddc_get_modes(struct drm_connector *connector,
 			struct i2c_adapter *adapter)
 {
 	struct edid *edid;
+<<<<<<< HEAD
+=======
+	int ret;
+>>>>>>> v3.10.88
 
 	edid = drm_get_edid(connector, adapter);
 	if (!edid)
 		return 0;
+<<<<<<< HEAD
+=======
+
+	ret = intel_connector_update_modes(connector, edid);
+	kfree(edid);
+>>>>>>> v3.10.88
 
 	return intel_connector_update_modes(connector, edid);
 }
@@ -122,12 +121,13 @@ intel_attach_force_audio_property(struct drm_connector *connector)
 
 		dev_priv->force_audio_property = prop;
 	}
-	drm_connector_attach_property(connector, prop, 0);
+	drm_object_attach_property(&connector->base, prop, 0);
 }
 
 static const struct drm_prop_enum_list broadcast_rgb_names[] = {
-	{ 0, "Full" },
-	{ 1, "Limited 16:235" },
+	{ INTEL_BROADCAST_RGB_AUTO, "Automatic" },
+	{ INTEL_BROADCAST_RGB_FULL, "Full" },
+	{ INTEL_BROADCAST_RGB_LIMITED, "Limited 16:235" },
 };
 
 void
@@ -149,5 +149,5 @@ intel_attach_broadcast_rgb_property(struct drm_connector *connector)
 		dev_priv->broadcast_rgb_property = prop;
 	}
 
-	drm_connector_attach_property(connector, prop, 0);
+	drm_object_attach_property(&connector->base, prop, 0);
 }

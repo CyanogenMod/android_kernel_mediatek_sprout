@@ -23,12 +23,11 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/irqchip/chained_irq.h>
 #include <linux/irq.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/spinlock.h>
-
-#include <asm/mach/irq.h>
 
 #include <mach/msm_gpiomux.h>
 #include <mach/msm_iomap.h>
@@ -249,7 +248,7 @@ static void msm_gpio_irq_mask(struct irq_data *d)
 
 	spin_lock_irqsave(&tlmm_lock, irq_flags);
 	writel(TARGET_PROC_NONE, GPIO_INTR_CFG_SU(gpio));
-	clear_gpio_bits(INTR_RAW_STATUS_EN | INTR_ENABLE, GPIO_INTR_CFG(gpio));
+	clear_gpio_bits(BIT(INTR_RAW_STATUS_EN) | BIT(INTR_ENABLE), GPIO_INTR_CFG(gpio));
 	__clear_bit(gpio, msm_gpio.enabled_irqs);
 	spin_unlock_irqrestore(&tlmm_lock, irq_flags);
 }
@@ -261,7 +260,7 @@ static void msm_gpio_irq_unmask(struct irq_data *d)
 
 	spin_lock_irqsave(&tlmm_lock, irq_flags);
 	__set_bit(gpio, msm_gpio.enabled_irqs);
-	set_gpio_bits(INTR_RAW_STATUS_EN | INTR_ENABLE, GPIO_INTR_CFG(gpio));
+	set_gpio_bits(BIT(INTR_RAW_STATUS_EN) | BIT(INTR_ENABLE), GPIO_INTR_CFG(gpio));
 	writel(TARGET_PROC_SCORPION, GPIO_INTR_CFG_SU(gpio));
 	spin_unlock_irqrestore(&tlmm_lock, irq_flags);
 }
@@ -317,9 +316,7 @@ static void msm_summary_irq_handler(unsigned int irq, struct irq_desc *desc)
 
 	chained_irq_enter(chip, desc);
 
-	for (i = find_first_bit(msm_gpio.enabled_irqs, NR_GPIO_IRQS);
-	     i < NR_GPIO_IRQS;
-	     i = find_next_bit(msm_gpio.enabled_irqs, NR_GPIO_IRQS, i + 1)) {
+	for_each_set_bit(i, msm_gpio.enabled_irqs, NR_GPIO_IRQS) {
 		if (readl(GPIO_INTR_STATUS(i)) & BIT(INTR_STATUS))
 			generic_handle_irq(msm_gpio_to_irq(&msm_gpio.gpio_chip,
 							   i));
@@ -354,7 +351,7 @@ static struct irq_chip msm_gpio_irq_chip = {
 	.irq_set_wake	= msm_gpio_irq_set_wake,
 };
 
-static int __devinit msm_gpio_probe(struct platform_device *dev)
+static int msm_gpio_probe(struct platform_device *dev)
 {
 	int i, irq, ret;
 
@@ -378,7 +375,7 @@ static int __devinit msm_gpio_probe(struct platform_device *dev)
 	return 0;
 }
 
-static int __devexit msm_gpio_remove(struct platform_device *dev)
+static int msm_gpio_remove(struct platform_device *dev)
 {
 	int ret = gpiochip_remove(&msm_gpio.gpio_chip);
 
@@ -392,7 +389,7 @@ static int __devexit msm_gpio_remove(struct platform_device *dev)
 
 static struct platform_driver msm_gpio_driver = {
 	.probe = msm_gpio_probe,
-	.remove = __devexit_p(msm_gpio_remove),
+	.remove = msm_gpio_remove,
 	.driver = {
 		.name = "msmgpio",
 		.owner = THIS_MODULE,

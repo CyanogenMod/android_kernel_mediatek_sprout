@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 config ARM_GIC
 	select IRQ_DOMAIN
 #	select MULTI_IRQ_HANDLER
@@ -21,6 +22,8 @@ config ARM_VIC_NR
 	  The maximum number of VICs available in the system, for
 	  power management.
 
+=======
+>>>>>>> v3.10.88
 config ICST
 	bool
 

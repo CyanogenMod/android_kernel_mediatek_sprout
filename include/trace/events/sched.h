@@ -127,9 +127,15 @@ DECLARE_EVENT_CLASS(sched_wakeup_template,
 		__entry->prio		= p->prio;
 		__entry->success	= success;
 		__entry->target_cpu	= task_cpu(p);
+<<<<<<< HEAD
 #ifdef CONFIG_MTK_SCHED_TRACERS
         __entry->state      =__trace_sched_switch_state(p);
 #endif
+=======
+	)
+	TP_perf_assign(
+		__perf_task(p);
+>>>>>>> v3.10.88
 	),
 
 	TP_printk(
@@ -203,7 +209,11 @@ TRACE_EVENT(sched_switch,
 	  __print_flags(__entry->prev_state & (_MT_TASK_STATE_MASK), "|",
 				{ 1, "S"} , { 2, "D" }, { 4, "T" }, { 8, "t" },
 				{ 16, "Z" }, { 32, "X" }, { 64, "x" },
+<<<<<<< HEAD
                 {128, "K"}, { 256, "W"}) : "R",
+=======
+				{ 128, "K" }, { 256, "W" }, { 512, "P" }) : "R",
+>>>>>>> v3.10.88
 		__entry->prev_state & TASK_STATE_MAX ? "+" : "",
 		__entry->next_comm, __entry->next_pid, __entry->next_prio
 #ifdef CONFIG_MTK_SCHED_TRACERS
@@ -413,6 +423,7 @@ DECLARE_EVENT_CLASS(sched_stat_template,
 	)
 	TP_perf_assign(
 		__perf_count(delay);
+		__perf_task(tsk);
 	),
 
 	TP_printk("comm=%s pid=%d delay=%Lu [ns]",

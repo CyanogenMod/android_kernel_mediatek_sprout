@@ -8,9 +8,16 @@
  */
 typedef struct {
 #ifdef CONFIG_CPU_HAS_ASID
+<<<<<<< HEAD
 	u64 id;
+=======
+	atomic64_t	id;
+#else
+	int		switch_pending;
+>>>>>>> v3.10.88
 #endif
-	unsigned int kvm_seq;
+	unsigned int	vmalloc_seq;
+	unsigned long	sigpage;
 } mm_context_t;
 
 /*
@@ -19,7 +26,11 @@ typedef struct {
 #ifdef CONFIG_CPU_HAS_ASID
 #define ASID_BITS	8
 #define ASID_MASK	((~0ULL) << ASID_BITS)
+<<<<<<< HEAD
 #define ASID(mm)	((mm)->context.id & ~ASID_MASK)
+=======
+#define ASID(mm)	((mm)->context.id.counter & ~ASID_MASK)
+>>>>>>> v3.10.88
 #else
 #define ASID(mm)	(0)
 #endif
@@ -32,11 +43,12 @@ typedef struct {
  *  modified for 2.6 by Hyok S. Choi <hyok.choi@samsung.com>
  */
 typedef struct {
-	unsigned long		end_brk;
+	unsigned long	end_brk;
 } mm_context_t;
 
 #endif
 
+<<<<<<< HEAD
 /*
  * switch_mm() may do a full cache flush over the context switch,
  * so enable interrupts over the context switch to avoid high
@@ -46,4 +58,6 @@ typedef struct {
 #define __ARCH_WANT_INTERRUPTS_ON_CTXSW
 #endif
 
+=======
+>>>>>>> v3.10.88
 #endif
