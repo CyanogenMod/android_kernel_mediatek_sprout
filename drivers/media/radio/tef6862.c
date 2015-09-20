@@ -96,12 +96,12 @@ static int tef6862_g_tuner(struct v4l2_subdev *sd, struct v4l2_tuner *v)
 	return 0;
 }
 
-static int tef6862_s_tuner(struct v4l2_subdev *sd, struct v4l2_tuner *v)
+static int tef6862_s_tuner(struct v4l2_subdev *sd, const struct v4l2_tuner *v)
 {
 	return v->index ? -EINVAL : 0;
 }
 
-static int tef6862_s_frequency(struct v4l2_subdev *sd, struct v4l2_frequency *f)
+static int tef6862_s_frequency(struct v4l2_subdev *sd, const struct v4l2_frequency *f)
 {
 	struct tef6862_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -165,8 +165,8 @@ static const struct v4l2_subdev_ops tef6862_ops = {
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
 
-static int __devinit tef6862_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int tef6862_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
 	struct tef6862_state *state;
 	struct v4l2_subdev *sd;
@@ -189,7 +189,7 @@ static int __devinit tef6862_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int __devexit tef6862_remove(struct i2c_client *client)
+static int tef6862_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 

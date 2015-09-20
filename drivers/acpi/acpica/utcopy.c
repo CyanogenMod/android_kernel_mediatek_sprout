@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -317,7 +317,7 @@ acpi_ut_copy_ielement_to_eelement(u8 object_type,
  * FUNCTION:    acpi_ut_copy_ipackage_to_epackage
  *
  * PARAMETERS:  internal_object     - Pointer to the object we are returning
- *              Buffer              - Where the object is returned
+ *              buffer              - Where the object is returned
  *              space_used          - Where the object length is returned
  *
  * RETURN:      Status
@@ -785,7 +785,7 @@ acpi_ut_copy_simple_object(union acpi_operand_object *source_desc,
 
 		status = acpi_os_create_mutex(&dest_desc->mutex.os_mutex);
 		if (ACPI_FAILURE(status)) {
-			return status;
+			return (status);
 		}
 		break;
 
@@ -795,7 +795,7 @@ acpi_ut_copy_simple_object(union acpi_operand_object *source_desc,
 						  &dest_desc->event.
 						  os_semaphore);
 		if (ACPI_FAILURE(status)) {
-			return status;
+			return (status);
 		}
 		break;
 
@@ -996,6 +996,12 @@ acpi_ut_copy_iobject_to_iobject(union acpi_operand_object *source_desc,
 						      walk_state);
 	} else {
 		status = acpi_ut_copy_simple_object(source_desc, *dest_desc);
+	}
+
+	/* Delete the allocated object if copy failed */
+
+	if (ACPI_FAILURE(status)) {
+		acpi_ut_remove_reference(*dest_desc);
 	}
 
 	return_ACPI_STATUS(status);

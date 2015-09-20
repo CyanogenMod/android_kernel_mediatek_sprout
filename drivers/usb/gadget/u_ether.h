@@ -21,6 +21,7 @@
 
 #include "gadget_chips.h"
 
+struct eth_dev;
 
 /*
  * This represents the USB side of an "ethernet" link, managed by a USB
@@ -69,13 +70,38 @@ struct gether {
 			|USB_CDC_PACKET_TYPE_PROMISCUOUS \
 			|USB_CDC_PACKET_TYPE_DIRECTED)
 
+/* variant of gether_setup that allows customizing network device name */
+struct eth_dev *gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
+		const char *netname);
 
 /* netdev setup/teardown as directed by the gadget driver */
+<<<<<<< HEAD
 int gether_setup(struct usb_gadget *g, u8 ethaddr[ETH_ALEN]);
 void gether_cleanup(void);
 /* variant of gether_setup that allows customizing network device name */
 int gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 		const char *netname);
+=======
+/* gether_setup - initialize one ethernet-over-usb link
+ * @g: gadget to associated with these links
+ * @ethaddr: NULL, or a buffer in which the ethernet address of the
+ *	host side of the link is recorded
+ * Context: may sleep
+ *
+ * This sets up the single network link that may be exported by a
+ * gadget driver using this framework.  The link layer addresses are
+ * set up using module parameters.
+ *
+ * Returns negative errno, or zero on success
+ */
+static inline struct eth_dev *gether_setup(struct usb_gadget *g,
+		u8 ethaddr[ETH_ALEN])
+{
+	return gether_setup_name(g, ethaddr, "usb");
+}
+
+void gether_cleanup(struct eth_dev *dev);
+>>>>>>> v3.10.88
 
 /* connect/disconnect is handled by individual functions */
 struct net_device *gether_connect(struct gether *);
@@ -95,21 +121,30 @@ static inline bool can_support_ecm(struct usb_gadget *gadget)
 }
 
 /* each configuration may bind one instance of an ethernet link */
-int geth_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN]);
-int ecm_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN]);
-int ncm_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN]);
-int eem_bind_config(struct usb_configuration *c);
+int geth_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
+		struct eth_dev *dev);
+int ecm_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
+		struct eth_dev *dev);
+int ncm_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
+		struct eth_dev *dev);
+int eem_bind_config(struct usb_configuration *c, struct eth_dev *dev);
 
 #ifdef USB_ETH_RNDIS
 
+<<<<<<< HEAD
 int rndis_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN]);
 int rndis_bind_config_vendor(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
 				u32 vendorID, const char *manufacturer);
+=======
+int rndis_bind_config_vendor(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
+		u32 vendorID, const char *manufacturer, struct eth_dev *dev);
+>>>>>>> v3.10.88
 
 #else
 
 static inline int
-rndis_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN])
+rndis_bind_config_vendor(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
+		u32 vendorID, const char *manufacturer, struct eth_dev *dev)
 {
 	return 0;
 }
@@ -122,5 +157,24 @@ rndis_bind_config_vendor(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
 }
 
 #endif
+
+/**
+ * rndis_bind_config - add RNDIS network link to a configuration
+ * @c: the configuration to support the network link
+ * @ethaddr: a buffer in which the ethernet address of the host side
+ *	side of the link was recorded
+ * Context: single threaded during gadget setup
+ *
+ * Returns zero on success, else negative errno.
+ *
+ * Caller must have called @gether_setup().  Caller is also responsible
+ * for calling @gether_cleanup() before module unload.
+ */
+static inline int rndis_bind_config(struct usb_configuration *c,
+		u8 ethaddr[ETH_ALEN], struct eth_dev *dev)
+{
+	return rndis_bind_config_vendor(c, ethaddr, 0, NULL, dev);
+}
+
 
 #endif /* __U_ETHER_H */

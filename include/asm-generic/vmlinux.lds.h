@@ -52,13 +52,7 @@
 #define LOAD_OFFSET 0
 #endif
 
-#ifndef SYMBOL_PREFIX
-#define VMLINUX_SYMBOL(sym) sym
-#else
-#define PASTE2(x,y) x##y
-#define PASTE(x,y) PASTE2(x,y)
-#define VMLINUX_SYMBOL(sym) PASTE(SYMBOL_PREFIX, sym)
-#endif
+#include <linux/export.h>
 
 /* Align . to a 8 byte boundary equals to maximum function alignment. */
 #define ALIGN_FUNCTION()  . = ALIGN(8)
@@ -149,6 +143,33 @@
 #define TRACE_SYSCALLS()
 #endif
 
+#ifdef CONFIG_CLKSRC_OF
+#define CLKSRC_OF_TABLES() . = ALIGN(8);				\
+			   VMLINUX_SYMBOL(__clksrc_of_table) = .;	\
+			   *(__clksrc_of_table)				\
+			   *(__clksrc_of_table_end)
+#else
+#define CLKSRC_OF_TABLES()
+#endif
+
+#ifdef CONFIG_IRQCHIP
+#define IRQCHIP_OF_MATCH_TABLE()					\
+	. = ALIGN(8);							\
+	VMLINUX_SYMBOL(__irqchip_begin) = .;				\
+	*(__irqchip_of_table)		  				\
+	*(__irqchip_of_end)
+#else
+#define IRQCHIP_OF_MATCH_TABLE()
+#endif
+
+#ifdef CONFIG_COMMON_CLK
+#define CLK_OF_TABLES() . = ALIGN(8);				\
+			VMLINUX_SYMBOL(__clk_of_table) = .;	\
+			*(__clk_of_table)			\
+			*(__clk_of_table_end)
+#else
+#define CLK_OF_TABLES()
+#endif
 
 #define KERNEL_DTB()							\
 	STRUCT_ALIGN();							\
@@ -486,14 +507,17 @@
 	CPU_DISCARD(init.data)						\
 	MEM_DISCARD(init.data)						\
 	KERNEL_CTORS()							\
-	*(.init.rodata)							\
 	MCOUNT_REC()							\
+	*(.init.rodata)							\
 	FTRACE_EVENTS()							\
 	TRACE_SYSCALLS()						\
 	DEV_DISCARD(init.rodata)					\
 	CPU_DISCARD(init.rodata)					\
 	MEM_DISCARD(init.rodata)					\
-	KERNEL_DTB()
+	CLK_OF_TABLES()							\
+	CLKSRC_OF_TABLES()						\
+	KERNEL_DTB()							\
+	IRQCHIP_OF_MATCH_TABLE()
 
 #define INIT_TEXT							\
 	*(.init.text)							\
@@ -530,9 +554,18 @@
 		*(.scommon)						\
 	}
 
+/*
+ * Allow archectures to redefine BSS_FIRST_SECTIONS to add extra
+ * sections to the front of bss.
+ */
+#ifndef BSS_FIRST_SECTIONS
+#define BSS_FIRST_SECTIONS
+#endif
+
 #define BSS(bss_align)							\
 	. = ALIGN(bss_align);						\
 	.bss : AT(ADDR(.bss) - LOAD_OFFSET) {				\
+		BSS_FIRST_SECTIONS					\
 		*(.bss..page_aligned)					\
 		*(.dynbss)						\
 		*(.bss)							\

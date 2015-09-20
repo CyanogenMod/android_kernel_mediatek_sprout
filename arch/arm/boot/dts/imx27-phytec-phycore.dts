@@ -10,7 +10,7 @@
  */
 
 /dts-v1/;
-/include/ "imx27.dtsi"
+#include "imx27.dtsi"
 
 / {
 	model = "Phytec pcm038";
@@ -21,35 +21,26 @@
 	};
 
 	soc {
-		aipi@10000000 { /* aipi */
-
-			wdog@10002000 {
-				status = "okay";
-			};
-
-			uart@1000a000 {
+		aipi@10000000 { /* aipi1 */
+			serial@1000a000 {
 				fsl,uart-has-rtscts;
 				status = "okay";
 			};
 
-			uart@1000b000 {
+			serial@1000b000 {
 				fsl,uart-has-rtscts;
 				status = "okay";
 			};
 
-			uart@1000c000 {
+			serial@1000c000 {
 				fsl,uart-has-rtscts;
-				status = "okay";
-			};
-
-			fec@1002b000 {
 				status = "okay";
 			};
 
 			i2c@1001d000 {
 				clock-frequency = <400000>;
 				status = "okay";
-				at24@4c {
+				at24@52 {
 					compatible = "at,24c32";
 					pagesize = <32>;
 					reg = <0x52>;
@@ -64,6 +55,12 @@
 				};
 			};
 		};
+
+		aipi@10020000 { /* aipi2 */
+			ethernet@1002b000 {
+				status = "okay";
+			};
+		};
 	};
 
 	nor_flash@c0000000 {
@@ -73,4 +70,10 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 	};
+};
+
+&nfc {
+	nand-bus-width = <8>;
+	nand-ecc-mode = "hw";
+	status = "okay";
 };

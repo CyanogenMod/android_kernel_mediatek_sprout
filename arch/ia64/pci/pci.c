@@ -15,6 +15,7 @@
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/pci.h>
+#include <linux/pci-acpi.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/slab.h>
@@ -116,8 +117,7 @@ struct pci_ops pci_root_ops = {
 
 /* Called by ACPI when it finds a new root bus.  */
 
-static struct pci_controller * __devinit
-alloc_pci_controller (int seg)
+static struct pci_controller *alloc_pci_controller(int seg)
 {
 	struct pci_controller *controller;
 
@@ -165,8 +165,8 @@ new_space (u64 phys_base, int sparse)
 	return i;
 }
 
-static u64 __devinit
-add_io_space (struct pci_root_info *info, struct acpi_resource_address64 *addr)
+static u64 add_io_space(struct pci_root_info *info,
+			struct acpi_resource_address64 *addr)
 {
 	struct resource *resource;
 	char *name;
@@ -226,8 +226,8 @@ out:
 	return ~0;
 }
 
-static acpi_status __devinit resource_to_window(struct acpi_resource *resource,
-	struct acpi_resource_address64 *addr)
+static acpi_status resource_to_window(struct acpi_resource *resource,
+				      struct acpi_resource_address64 *addr)
 {
 	acpi_status status;
 
@@ -249,8 +249,7 @@ static acpi_status __devinit resource_to_window(struct acpi_resource *resource,
 	return AE_ERROR;
 }
 
-static acpi_status __devinit
-count_window (struct acpi_resource *resource, void *data)
+static acpi_status count_window(struct acpi_resource *resource, void *data)
 {
 	unsigned int *windows = (unsigned int *) data;
 	struct acpi_resource_address64 addr;
@@ -263,7 +262,7 @@ count_window (struct acpi_resource *resource, void *data)
 	return AE_OK;
 }
 
-static __devinit acpi_status add_window(struct acpi_resource *res, void *data)
+static acpi_status add_window(struct acpi_resource *res, void *data)
 {
 	struct pci_root_info *info = data;
 	struct pci_window *window;
@@ -295,7 +294,6 @@ static __devinit acpi_status add_window(struct acpi_resource *res, void *data)
 	window->resource.flags = flags;
 	window->resource.start = addr.minimum + offset;
 	window->resource.end = window->resource.start + addr.address_length - 1;
-	window->resource.child = NULL;
 	window->offset = offset;
 
 	if (insert_resource(root, &window->resource)) {
@@ -325,8 +323,7 @@ static __devinit acpi_status add_window(struct acpi_resource *res, void *data)
 	return AE_OK;
 }
 
-struct pci_bus * __devinit
-pci_acpi_scan_root(struct acpi_pci_root *root)
+struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 {
 	struct acpi_device *device = root->device;
 	int domain = root->segment;
@@ -351,11 +348,13 @@ pci_acpi_scan_root(struct acpi_pci_root *root)
 #endif
 
 	INIT_LIST_HEAD(&info.resources);
+	/* insert busn resource at first */
+	pci_add_resource(&info.resources, &root->secondary);
 	acpi_walk_resources(device->handle, METHOD_NAME__CRS, count_window,
 			&windows);
 	if (windows) {
 		controller->window =
-			kmalloc_node(sizeof(*controller->window) * windows,
+			kzalloc_node(sizeof(*controller->window) * windows,
 				     GFP_KERNEL, controller->node);
 		if (!controller->window)
 			goto out2;
@@ -384,7 +383,7 @@ pci_acpi_scan_root(struct acpi_pci_root *root)
 		return NULL;
 	}
 
-	pbus->subordinate = pci_scan_child_bus(pbus);
+	pci_scan_child_bus(pbus);
 	return pbus;
 
 out3:
@@ -395,7 +394,15 @@ out1:
 	return NULL;
 }
 
-static int __devinit is_valid_resource(struct pci_dev *dev, int idx)
+int pcibios_root_bridge_prepare(struct pci_host_bridge *bridge)
+{
+	struct pci_controller *controller = bridge->bus->sysdata;
+
+	ACPI_HANDLE_SET(&bridge->dev, controller->acpi_handle);
+	return 0;
+}
+
+static int is_valid_resource(struct pci_dev *dev, int idx)
 {
 	unsigned int i, type_mask = IORESOURCE_IO | IORESOURCE_MEM;
 	struct resource *devr = &dev->resource[idx], *busr;
@@ -413,8 +420,7 @@ static int __devinit is_valid_resource(struct pci_dev *dev, int idx)
 	return 0;
 }
 
-static void __devinit
-pcibios_fixup_resources(struct pci_dev *dev, int start, int limit)
+static void pcibios_fixup_resources(struct pci_dev *dev, int start, int limit)
 {
 	int i;
 
@@ -426,13 +432,13 @@ pcibios_fixup_resources(struct pci_dev *dev, int start, int limit)
 	}
 }
 
-void __devinit pcibios_fixup_device_resources(struct pci_dev *dev)
+void pcibios_fixup_device_resources(struct pci_dev *dev)
 {
 	pcibios_fixup_resources(dev, 0, PCI_BRIDGE_RESOURCES);
 }
 EXPORT_SYMBOL_GPL(pcibios_fixup_device_resources);
 
-static void __devinit pcibios_fixup_bridge_resources(struct pci_dev *dev)
+static void pcibios_fixup_bridge_resources(struct pci_dev *dev)
 {
 	pcibios_fixup_resources(dev, PCI_BRIDGE_RESOURCES, PCI_NUM_RESOURCES);
 }
@@ -440,8 +446,7 @@ static void __devinit pcibios_fixup_bridge_resources(struct pci_dev *dev)
 /*
  *  Called after each bus is probed, but before its children are examined.
  */
-void __devinit
-pcibios_fixup_bus (struct pci_bus *b)
+void pcibios_fixup_bus(struct pci_bus *b)
 {
 	struct pci_dev *dev;
 
@@ -454,17 +459,19 @@ pcibios_fixup_bus (struct pci_bus *b)
 	platform_pci_fixup_bus(b);
 }
 
+void pcibios_add_bus(struct pci_bus *bus)
+{
+	acpi_pci_add_bus(bus);
+}
+
+void pcibios_remove_bus(struct pci_bus *bus)
+{
+	acpi_pci_remove_bus(bus);
+}
+
 void pcibios_set_master (struct pci_dev *dev)
 {
 	/* No special bus mastering setup handling */
-}
-
-void __devinit
-pcibios_update_irq (struct pci_dev *dev, int irq)
-{
-	pci_write_config_byte(dev, PCI_INTERRUPT_LINE, irq);
-
-	/* ??? FIXME -- record old value for shutdown.  */
 }
 
 int
@@ -494,15 +501,6 @@ pcibios_align_resource (void *data, const struct resource *res,
 		        resource_size_t size, resource_size_t align)
 {
 	return res->start;
-}
-
-/*
- * PCI BIOS setup, always defaults to SAL interface
- */
-char * __init
-pcibios_setup (char *str)
-{
-	return str;
 }
 
 int

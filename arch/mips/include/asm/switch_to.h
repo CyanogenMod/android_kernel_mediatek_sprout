@@ -22,7 +22,7 @@ struct task_struct;
  * switch_to(n) should switch tasks to task nr n, first
  * checking that n isn't the current task, in which case it does nothing.
  */
-extern asmlinkage void *resume(void *last, void *next, void *next_ti);
+extern asmlinkage void *resume(void *last, void *next, void *next_ti, u32 __usedfpu);
 
 extern unsigned int ll_bit;
 extern struct task_struct *ll_task;
@@ -30,7 +30,7 @@ extern struct task_struct *ll_task;
 #ifdef CONFIG_MIPS_MT_FPAFF
 
 /*
- * Handle the scheduler resume end of FPU affinity management.  We do this
+ * Handle the scheduler resume end of FPU affinity management.	We do this
  * inline to try to keep the overhead down. If we have been forced to run on
  * a "CPU" with an FPU because of a previous high level of FP computation,
  * but did not actually use the FPU during the most recent time-slice (CU1
@@ -66,11 +66,13 @@ do {									\
 
 #define switch_to(prev, next, last)					\
 do {									\
+	u32 __usedfpu;							\
 	__mips_mt_fpaff_switch_to(prev);				\
 	if (cpu_has_dsp)						\
 		__save_dsp(prev);					\
 	__clear_software_ll_bit();					\
-	(last) = resume(prev, next, task_thread_info(next));		\
+	__usedfpu = test_and_clear_tsk_thread_flag(prev, TIF_USEDFPU);	\
+	(last) = resume(prev, next, task_thread_info(next), __usedfpu); \
 } while (0)
 
 #define finish_arch_switch(prev)					\

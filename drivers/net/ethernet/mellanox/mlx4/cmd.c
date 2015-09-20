@@ -40,6 +40,7 @@
 
 #include <linux/mlx4/cmd.h>
 #include <linux/semaphore.h>
+#include <rdma/ib_smi.h>
 
 #include <asm/io.h>
 
@@ -221,8 +222,6 @@ static int mlx4_comm_cmd_poll(struct mlx4_dev *dev, u8 cmd, u16 param,
 		 * FLR process. The only non-zero result in the RESET command
 		 * is MLX4_DELAY_RESET_SLAVE*/
 		if ((MLX4_COMM_CMD_RESET == cmd)) {
-			mlx4_warn(dev, "Got slave FLRed from Communication"
-				  " channel (ret:0x%x)\n", ret_from_pending);
 			err = MLX4_DELAY_RESET_SLAVE;
 		} else {
 			mlx4_warn(dev, "Communication channel timed out\n");
@@ -296,7 +295,12 @@ int mlx4_comm_cmd(struct mlx4_dev *dev, u8 cmd, u16 param,
 
 static int cmd_pending(struct mlx4_dev *dev)
 {
-	u32 status = readl(mlx4_priv(dev)->cmd.hcr + HCR_STATUS_OFFSET);
+	u32 status;
+
+	if (pci_channel_offline(dev->pdev))
+		return -EIO;
+
+	status = readl(mlx4_priv(dev)->cmd.hcr + HCR_STATUS_OFFSET);
 
 	return (status & swab32(1 << HCR_GO_BIT)) ||
 		(mlx4_priv(dev)->cmd.toggle ==
@@ -314,11 +318,29 @@ static int mlx4_cmd_post(struct mlx4_dev *dev, u64 in_param, u64 out_param,
 
 	mutex_lock(&cmd->hcr_mutex);
 
+	if (pci_channel_offline(dev->pdev)) {
+		/*
+		 * Device is going through error recovery
+		 * and cannot accept commands.
+		 */
+		ret = -EIO;
+		goto out;
+	}
+
 	end = jiffies;
 	if (event)
 		end += msecs_to_jiffies(GO_BIT_TIMEOUT_MSECS);
 
 	while (cmd_pending(dev)) {
+		if (pci_channel_offline(dev->pdev)) {
+			/*
+			 * Device is going through error recovery
+			 * and cannot accept commands.
+			 */
+			ret = -EIO;
+			goto out;
+		}
+
 		if (time_after_eq(jiffies, end)) {
 			mlx4_err(dev, "%s:cmd_pending failed\n", __func__);
 			goto out;
@@ -371,7 +393,8 @@ static int mlx4_slave_cmd(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 	struct mlx4_vhcr_cmd *vhcr = priv->mfunc.vhcr;
 	int ret;
 
-	down(&priv->cmd.slave_sem);
+	mutex_lock(&priv->cmd.slave_cmd_mutex);
+
 	vhcr->in_param = cpu_to_be64(in_param);
 	vhcr->out_param = out_param ? cpu_to_be64(*out_param) : 0;
 	vhcr->in_modifier = cpu_to_be32(in_modifier);
@@ -379,6 +402,7 @@ static int mlx4_slave_cmd(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 	vhcr->token = cpu_to_be16(CMD_POLL_TOKEN);
 	vhcr->status = 0;
 	vhcr->flags = !!(priv->cmd.use_events) << 6;
+
 	if (mlx4_is_master(dev)) {
 		ret = mlx4_master_process_vhcr(dev, dev->caps.function, vhcr);
 		if (!ret) {
@@ -415,7 +439,8 @@ static int mlx4_slave_cmd(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 			mlx4_err(dev, "failed execution of VHCR_POST command"
 				 "opcode 0x%x\n", op);
 	}
-	up(&priv->cmd.slave_sem);
+
+	mutex_unlock(&priv->cmd.slave_cmd_mutex);
 	return ret;
 }
 
@@ -431,14 +456,33 @@ static int mlx4_cmd_poll(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 
 	down(&priv->cmd.poll_sem);
 
+	if (pci_channel_offline(dev->pdev)) {
+		/*
+		 * Device is going through error recovery
+		 * and cannot accept commands.
+		 */
+		err = -EIO;
+		goto out;
+	}
+
 	err = mlx4_cmd_post(dev, in_param, out_param ? *out_param : 0,
 			    in_modifier, op_modifier, op, CMD_POLL_TOKEN, 0);
 	if (err)
 		goto out;
 
 	end = msecs_to_jiffies(timeout) + jiffies;
-	while (cmd_pending(dev) && time_before(jiffies, end))
+	while (cmd_pending(dev) && time_before(jiffies, end)) {
+		if (pci_channel_offline(dev->pdev)) {
+			/*
+			 * Device is going through error recovery
+			 * and cannot accept commands.
+			 */
+			err = -EIO;
+			goto out;
+		}
+
 		cond_resched();
+	}
 
 	if (cmd_pending(dev)) {
 		err = -ETIMEDOUT;
@@ -532,6 +576,9 @@ int __mlx4_cmd(struct mlx4_dev *dev, u64 in_param, u64 *out_param,
 	       int out_is_imm, u32 in_modifier, u8 op_modifier,
 	       u16 op, unsigned long timeout, int native)
 {
+	if (pci_channel_offline(dev->pdev))
+		return -EIO;
+
 	if (!mlx4_is_mfunc(dev) || (native && mlx4_is_master(dev))) {
 		if (mlx4_priv(dev)->cmd.use_events)
 			return mlx4_cmd_wait(dev, in_param, out_param,
@@ -582,6 +629,162 @@ static int mlx4_ACCESS_MEM(struct mlx4_dev *dev, u64 master_addr,
 			    MLX4_CMD_TIME_CLASS_A, MLX4_CMD_NATIVE);
 }
 
+static int query_pkey_block(struct mlx4_dev *dev, u8 port, u16 index, u16 *pkey,
+			       struct mlx4_cmd_mailbox *inbox,
+			       struct mlx4_cmd_mailbox *outbox)
+{
+	struct ib_smp *in_mad = (struct ib_smp *)(inbox->buf);
+	struct ib_smp *out_mad = (struct ib_smp *)(outbox->buf);
+	int err;
+	int i;
+
+	if (index & 0x1f)
+		return -EINVAL;
+
+	in_mad->attr_mod = cpu_to_be32(index / 32);
+
+	err = mlx4_cmd_box(dev, inbox->dma, outbox->dma, port, 3,
+			   MLX4_CMD_MAD_IFC, MLX4_CMD_TIME_CLASS_C,
+			   MLX4_CMD_NATIVE);
+	if (err)
+		return err;
+
+	for (i = 0; i < 32; ++i)
+		pkey[i] = be16_to_cpu(((__be16 *) out_mad->data)[i]);
+
+	return err;
+}
+
+static int get_full_pkey_table(struct mlx4_dev *dev, u8 port, u16 *table,
+			       struct mlx4_cmd_mailbox *inbox,
+			       struct mlx4_cmd_mailbox *outbox)
+{
+	int i;
+	int err;
+
+	for (i = 0; i < dev->caps.pkey_table_len[port]; i += 32) {
+		err = query_pkey_block(dev, port, i, table + i, inbox, outbox);
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+#define PORT_CAPABILITY_LOCATION_IN_SMP 20
+#define PORT_STATE_OFFSET 32
+
+static enum ib_port_state vf_port_state(struct mlx4_dev *dev, int port, int vf)
+{
+	if (mlx4_get_slave_port_state(dev, vf, port) == SLAVE_PORT_UP)
+		return IB_PORT_ACTIVE;
+	else
+		return IB_PORT_DOWN;
+}
+
+static int mlx4_MAD_IFC_wrapper(struct mlx4_dev *dev, int slave,
+				struct mlx4_vhcr *vhcr,
+				struct mlx4_cmd_mailbox *inbox,
+				struct mlx4_cmd_mailbox *outbox,
+				struct mlx4_cmd_info *cmd)
+{
+	struct ib_smp *smp = inbox->buf;
+	u32 index;
+	u8 port;
+	u16 *table;
+	int err;
+	int vidx, pidx;
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct ib_smp *outsmp = outbox->buf;
+	__be16 *outtab = (__be16 *)(outsmp->data);
+	__be32 slave_cap_mask;
+	__be64 slave_node_guid;
+	port = vhcr->in_modifier;
+
+	if (smp->base_version == 1 &&
+	    smp->mgmt_class == IB_MGMT_CLASS_SUBN_LID_ROUTED &&
+	    smp->class_version == 1) {
+		if (smp->method	== IB_MGMT_METHOD_GET) {
+			if (smp->attr_id == IB_SMP_ATTR_PKEY_TABLE) {
+				index = be32_to_cpu(smp->attr_mod);
+				if (port < 1 || port > dev->caps.num_ports)
+					return -EINVAL;
+				table = kcalloc(dev->caps.pkey_table_len[port], sizeof *table, GFP_KERNEL);
+				if (!table)
+					return -ENOMEM;
+				/* need to get the full pkey table because the paravirtualized
+				 * pkeys may be scattered among several pkey blocks.
+				 */
+				err = get_full_pkey_table(dev, port, table, inbox, outbox);
+				if (!err) {
+					for (vidx = index * 32; vidx < (index + 1) * 32; ++vidx) {
+						pidx = priv->virt2phys_pkey[slave][port - 1][vidx];
+						outtab[vidx % 32] = cpu_to_be16(table[pidx]);
+					}
+				}
+				kfree(table);
+				return err;
+			}
+			if (smp->attr_id == IB_SMP_ATTR_PORT_INFO) {
+				/*get the slave specific caps:*/
+				/*do the command */
+				err = mlx4_cmd_box(dev, inbox->dma, outbox->dma,
+					    vhcr->in_modifier, vhcr->op_modifier,
+					    vhcr->op, MLX4_CMD_TIME_CLASS_C, MLX4_CMD_NATIVE);
+				/* modify the response for slaves */
+				if (!err && slave != mlx4_master_func_num(dev)) {
+					u8 *state = outsmp->data + PORT_STATE_OFFSET;
+
+					*state = (*state & 0xf0) | vf_port_state(dev, port, slave);
+					slave_cap_mask = priv->mfunc.master.slave_state[slave].ib_cap_mask[port];
+					memcpy(outsmp->data + PORT_CAPABILITY_LOCATION_IN_SMP, &slave_cap_mask, 4);
+				}
+				return err;
+			}
+			if (smp->attr_id == IB_SMP_ATTR_GUID_INFO) {
+				/* compute slave's gid block */
+				smp->attr_mod = cpu_to_be32(slave / 8);
+				/* execute cmd */
+				err = mlx4_cmd_box(dev, inbox->dma, outbox->dma,
+					     vhcr->in_modifier, vhcr->op_modifier,
+					     vhcr->op, MLX4_CMD_TIME_CLASS_C, MLX4_CMD_NATIVE);
+				if (!err) {
+					/* if needed, move slave gid to index 0 */
+					if (slave % 8)
+						memcpy(outsmp->data,
+						       outsmp->data + (slave % 8) * 8, 8);
+					/* delete all other gids */
+					memset(outsmp->data + 8, 0, 56);
+				}
+				return err;
+			}
+			if (smp->attr_id == IB_SMP_ATTR_NODE_INFO) {
+				err = mlx4_cmd_box(dev, inbox->dma, outbox->dma,
+					     vhcr->in_modifier, vhcr->op_modifier,
+					     vhcr->op, MLX4_CMD_TIME_CLASS_C, MLX4_CMD_NATIVE);
+				if (!err) {
+					slave_node_guid =  mlx4_get_slave_node_guid(dev, slave);
+					memcpy(outsmp->data + 12, &slave_node_guid, 8);
+				}
+				return err;
+			}
+		}
+	}
+	if (slave != mlx4_master_func_num(dev) &&
+	    ((smp->mgmt_class == IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) ||
+	     (smp->mgmt_class == IB_MGMT_CLASS_SUBN_LID_ROUTED &&
+	      smp->method == IB_MGMT_METHOD_SET))) {
+		mlx4_err(dev, "slave %d is trying to execute a Subnet MGMT MAD, "
+			 "class 0x%x, method 0x%x for attr 0x%x. Rejecting\n",
+			 slave, smp->method, smp->mgmt_class,
+			 be16_to_cpu(smp->attr_id));
+		return -EPERM;
+	}
+	/*default:*/
+	return mlx4_cmd_box(dev, inbox->dma, outbox->dma,
+				    vhcr->in_modifier, vhcr->op_modifier,
+				    vhcr->op, MLX4_CMD_TIME_CLASS_C, MLX4_CMD_NATIVE);
+}
+
 int mlx4_DMA_wrapper(struct mlx4_dev *dev, int slave,
 		     struct mlx4_vhcr *vhcr,
 		     struct mlx4_cmd_mailbox *inbox,
@@ -617,7 +820,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = NULL
+		.wrapper = mlx4_QUERY_FW_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_QUERY_HCA,
@@ -635,7 +838,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = NULL
+		.wrapper = mlx4_QUERY_DEV_CAP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_QUERY_FUNC_CAP,
@@ -905,7 +1108,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = mlx4_GEN_QP_wrapper
+		.wrapper = mlx4_INIT2INIT_QP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_INIT2RTR_QP,
@@ -923,7 +1126,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = mlx4_GEN_QP_wrapper
+		.wrapper = mlx4_RTR2RTS_QP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_RTS2RTS_QP,
@@ -932,7 +1135,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = mlx4_GEN_QP_wrapper
+		.wrapper = mlx4_RTS2RTS_QP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_SQERR2RTS_QP,
@@ -941,7 +1144,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = mlx4_GEN_QP_wrapper
+		.wrapper = mlx4_SQERR2RTS_QP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_2ERR_QP,
@@ -968,7 +1171,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = mlx4_GEN_QP_wrapper
+		.wrapper = mlx4_SQD2SQD_QP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_SQD2RTS_QP,
@@ -977,7 +1180,7 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.out_is_imm = false,
 		.encode_slave_id = false,
 		.verify = NULL,
-		.wrapper = mlx4_GEN_QP_wrapper
+		.wrapper = mlx4_SQD2RTS_QP_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_2RST_QP,
@@ -1014,6 +1217,24 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.encode_slave_id = false,
 		.verify = NULL,
 		.wrapper = mlx4_GEN_QP_wrapper
+	},
+	{
+		.opcode = MLX4_CMD_CONF_SPECIAL_QP,
+		.has_inbox = false,
+		.has_outbox = false,
+		.out_is_imm = false,
+		.encode_slave_id = false,
+		.verify = NULL, /* XXX verify: only demux can do this */
+		.wrapper = NULL
+	},
+	{
+		.opcode = MLX4_CMD_MAD_IFC,
+		.has_inbox = true,
+		.has_outbox = true,
+		.out_is_imm = false,
+		.encode_slave_id = false,
+		.verify = NULL,
+		.wrapper = mlx4_MAD_IFC_wrapper
 	},
 	{
 		.opcode = MLX4_CMD_QUERY_IF_STAT,
@@ -1079,6 +1300,25 @@ static struct mlx4_cmd_info cmd_info[] = {
 		.encode_slave_id = false,
 		.verify = NULL,
 		.wrapper = NULL
+	},
+	/* flow steering commands */
+	{
+		.opcode = MLX4_QP_FLOW_STEERING_ATTACH,
+		.has_inbox = true,
+		.has_outbox = false,
+		.out_is_imm = true,
+		.encode_slave_id = false,
+		.verify = NULL,
+		.wrapper = mlx4_QP_FLOW_STEERING_ATTACH_wrapper
+	},
+	{
+		.opcode = MLX4_QP_FLOW_STEERING_DETACH,
+		.has_inbox = false,
+		.has_outbox = false,
+		.out_is_imm = false,
+		.encode_slave_id = false,
+		.verify = NULL,
+		.wrapper = mlx4_QP_FLOW_STEERING_DETACH_wrapper
 	},
 };
 
@@ -1248,15 +1488,78 @@ out:
 	return ret;
 }
 
+static int mlx4_master_activate_admin_state(struct mlx4_priv *priv, int slave)
+{
+	int port, err;
+	struct mlx4_vport_state *vp_admin;
+	struct mlx4_vport_oper_state *vp_oper;
+
+	for (port = 1; port <= MLX4_MAX_PORTS; port++) {
+		vp_oper = &priv->mfunc.master.vf_oper[slave].vport[port];
+		vp_admin = &priv->mfunc.master.vf_admin[slave].vport[port];
+		vp_oper->state = *vp_admin;
+		if (MLX4_VGT != vp_admin->default_vlan) {
+			err = __mlx4_register_vlan(&priv->dev, port,
+						   vp_admin->default_vlan, &(vp_oper->vlan_idx));
+			if (err) {
+				vp_oper->vlan_idx = NO_INDX;
+				mlx4_warn((&priv->dev),
+					  "No vlan resorces slave %d, port %d\n",
+					  slave, port);
+				return err;
+			}
+			mlx4_dbg((&(priv->dev)), "alloc vlan %d idx  %d slave %d port %d\n",
+				 (int)(vp_oper->state.default_vlan),
+				 vp_oper->vlan_idx, slave, port);
+		}
+		if (vp_admin->spoofchk) {
+			vp_oper->mac_idx = __mlx4_register_mac(&priv->dev,
+							       port,
+							       vp_admin->mac);
+			if (0 > vp_oper->mac_idx) {
+				err = vp_oper->mac_idx;
+				vp_oper->mac_idx = NO_INDX;
+				mlx4_warn((&priv->dev),
+					  "No mac resorces slave %d, port %d\n",
+					  slave, port);
+				return err;
+			}
+			mlx4_dbg((&(priv->dev)), "alloc mac %llx idx  %d slave %d port %d\n",
+				 vp_oper->state.mac, vp_oper->mac_idx, slave, port);
+		}
+	}
+	return 0;
+}
+
+static void mlx4_master_deactivate_admin_state(struct mlx4_priv *priv, int slave)
+{
+	int port;
+	struct mlx4_vport_oper_state *vp_oper;
+
+	for (port = 1; port <= MLX4_MAX_PORTS; port++) {
+		vp_oper = &priv->mfunc.master.vf_oper[slave].vport[port];
+		if (NO_INDX != vp_oper->vlan_idx) {
+			__mlx4_unregister_vlan(&priv->dev,
+					       port, vp_oper->vlan_idx);
+			vp_oper->vlan_idx = NO_INDX;
+		}
+		if (NO_INDX != vp_oper->mac_idx) {
+			__mlx4_unregister_mac(&priv->dev, port, vp_oper->state.mac);
+			vp_oper->mac_idx = NO_INDX;
+		}
+	}
+	return;
+}
+
 static void mlx4_master_do_cmd(struct mlx4_dev *dev, int slave, u8 cmd,
 			       u16 param, u8 toggle)
 {
 	struct mlx4_priv *priv = mlx4_priv(dev);
 	struct mlx4_slave_state *slave_state = priv->mfunc.master.slave_state;
 	u32 reply;
-	u32 slave_status = 0;
 	u8 is_going_down = 0;
 	int i;
+	unsigned long flags;
 
 	slave_state[slave].comm_toggle ^= 1;
 	reply = (u32) slave_state[slave].comm_toggle << 31;
@@ -1268,16 +1571,17 @@ static void mlx4_master_do_cmd(struct mlx4_dev *dev, int slave, u8 cmd,
 	if (cmd == MLX4_COMM_CMD_RESET) {
 		mlx4_warn(dev, "Received reset from slave:%d\n", slave);
 		slave_state[slave].active = false;
+		mlx4_master_deactivate_admin_state(priv, slave);
 		for (i = 0; i < MLX4_EVENT_TYPES_NUM; ++i) {
 				slave_state[slave].event_eq[i].eqn = -1;
 				slave_state[slave].event_eq[i].token = 0;
 		}
 		/*check if we are in the middle of FLR process,
 		if so return "retry" status to the slave*/
-		if (MLX4_COMM_CMD_FLR == slave_state[slave].last_cmd) {
-			slave_status = MLX4_DELAY_RESET_SLAVE;
+		if (MLX4_COMM_CMD_FLR == slave_state[slave].last_cmd)
 			goto inform_slave_state;
-		}
+
+		mlx4_dispatch_event(dev, MLX4_DEV_EVENT_SLAVE_SHUTDOWN, slave);
 
 		/* write the version in the event field */
 		reply |= mlx4_comm_get_version();
@@ -1314,31 +1618,35 @@ static void mlx4_master_do_cmd(struct mlx4_dev *dev, int slave, u8 cmd,
 		if (slave_state[slave].last_cmd != MLX4_COMM_CMD_VHCR2)
 			goto reset_slave;
 		slave_state[slave].vhcr_dma |= param;
+		if (mlx4_master_activate_admin_state(priv, slave))
+				goto reset_slave;
 		slave_state[slave].active = true;
+		mlx4_dispatch_event(dev, MLX4_DEV_EVENT_SLAVE_INIT, slave);
 		break;
 	case MLX4_COMM_CMD_VHCR_POST:
 		if ((slave_state[slave].last_cmd != MLX4_COMM_CMD_VHCR_EN) &&
 		    (slave_state[slave].last_cmd != MLX4_COMM_CMD_VHCR_POST))
 			goto reset_slave;
-		down(&priv->cmd.slave_sem);
+
+		mutex_lock(&priv->cmd.slave_cmd_mutex);
 		if (mlx4_master_process_vhcr(dev, slave, NULL)) {
 			mlx4_err(dev, "Failed processing vhcr for slave:%d,"
 				 " resetting slave.\n", slave);
-			up(&priv->cmd.slave_sem);
+			mutex_unlock(&priv->cmd.slave_cmd_mutex);
 			goto reset_slave;
 		}
-		up(&priv->cmd.slave_sem);
+		mutex_unlock(&priv->cmd.slave_cmd_mutex);
 		break;
 	default:
 		mlx4_warn(dev, "Bad comm cmd:%d from slave:%d\n", cmd, slave);
 		goto reset_slave;
 	}
-	spin_lock(&priv->mfunc.master.slave_state_lock);
+	spin_lock_irqsave(&priv->mfunc.master.slave_state_lock, flags);
 	if (!slave_state[slave].is_slave_going_down)
 		slave_state[slave].last_cmd = cmd;
 	else
 		is_going_down = 1;
-	spin_unlock(&priv->mfunc.master.slave_state_lock);
+	spin_unlock_irqrestore(&priv->mfunc.master.slave_state_lock, flags);
 	if (is_going_down) {
 		mlx4_warn(dev, "Slave is going down aborting command(%d)"
 			  " executing from slave:%d\n",
@@ -1354,10 +1662,10 @@ static void mlx4_master_do_cmd(struct mlx4_dev *dev, int slave, u8 cmd,
 reset_slave:
 	/* cleanup any slave resources */
 	mlx4_delete_all_resources_for_slave(dev, slave);
-	spin_lock(&priv->mfunc.master.slave_state_lock);
+	spin_lock_irqsave(&priv->mfunc.master.slave_state_lock, flags);
 	if (!slave_state[slave].is_slave_going_down)
 		slave_state[slave].last_cmd = MLX4_COMM_CMD_RESET;
-	spin_unlock(&priv->mfunc.master.slave_state_lock);
+	spin_unlock_irqrestore(&priv->mfunc.master.slave_state_lock, flags);
 	/*with slave in the middle of flr, no need to clean resources again.*/
 inform_slave_state:
 	memset(&slave_state[slave].event_eq, 0,
@@ -1468,14 +1776,6 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 	struct mlx4_slave_state *s_state;
 	int i, j, err, port;
 
-	priv->mfunc.vhcr = dma_alloc_coherent(&(dev->pdev->dev), PAGE_SIZE,
-					    &priv->mfunc.vhcr_dma,
-					    GFP_KERNEL);
-	if (!priv->mfunc.vhcr) {
-		mlx4_err(dev, "Couldn't allocate vhcr.\n");
-		return -ENOMEM;
-	}
-
 	if (mlx4_is_master(dev))
 		priv->mfunc.comm =
 		ioremap(pci_resource_start(dev->pdev, priv->fw.comm_bar) +
@@ -1495,6 +1795,18 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 				sizeof(struct mlx4_slave_state), GFP_KERNEL);
 		if (!priv->mfunc.master.slave_state)
 			goto err_comm;
+
+		priv->mfunc.master.vf_admin =
+			kzalloc(dev->num_slaves *
+				sizeof(struct mlx4_vf_admin_state), GFP_KERNEL);
+		if (!priv->mfunc.master.vf_admin)
+			goto err_comm_admin;
+
+		priv->mfunc.master.vf_oper =
+			kzalloc(dev->num_slaves *
+				sizeof(struct mlx4_vf_oper_state), GFP_KERNEL);
+		if (!priv->mfunc.master.vf_oper)
+			goto err_comm_oper;
 
 		for (i = 0; i < dev->num_slaves; ++i) {
 			s_state = &priv->mfunc.master.slave_state[i];
@@ -1516,11 +1828,15 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 					goto err_slaves;
 				}
 				INIT_LIST_HEAD(&s_state->mcast_filters[port]);
+				priv->mfunc.master.vf_admin[i].vport[port].default_vlan = MLX4_VGT;
+				priv->mfunc.master.vf_oper[i].vport[port].state.default_vlan = MLX4_VGT;
+				priv->mfunc.master.vf_oper[i].vport[port].vlan_idx = NO_INDX;
+				priv->mfunc.master.vf_oper[i].vport[port].mac_idx = NO_INDX;
 			}
 			spin_lock_init(&s_state->lock);
 		}
 
-		memset(&priv->mfunc.master.cmd_eqe, 0, sizeof(struct mlx4_eqe));
+		memset(&priv->mfunc.master.cmd_eqe, 0, dev->caps.eqe_size);
 		priv->mfunc.master.cmd_eqe.type = MLX4_EVENT_TYPE_CMD;
 		INIT_WORK(&priv->mfunc.master.comm_work,
 			  mlx4_master_comm_channel);
@@ -1529,6 +1845,7 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 		INIT_WORK(&priv->mfunc.master.slave_flr_event_work,
 			  mlx4_master_handle_slave_flr);
 		spin_lock_init(&priv->mfunc.master.slave_state_lock);
+		spin_lock_init(&priv->mfunc.master.slave_eq.event_lock);
 		priv->mfunc.master.comm_wq =
 			create_singlethread_workqueue("mlx4_comm");
 		if (!priv->mfunc.master.comm_wq)
@@ -1537,7 +1854,6 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 		if (mlx4_init_resource_tracker(dev))
 			goto err_thread;
 
-		sema_init(&priv->cmd.slave_sem, 1);
 		err = mlx4_ARM_COMM_CHANNEL(dev);
 		if (err) {
 			mlx4_err(dev, " Failed to arm comm channel eq: %x\n",
@@ -1551,13 +1867,11 @@ int mlx4_multi_func_init(struct mlx4_dev *dev)
 			mlx4_err(dev, "Couldn't sync toggles\n");
 			goto err_comm;
 		}
-
-		sema_init(&priv->cmd.slave_sem, 1);
 	}
 	return 0;
 
 err_resource:
-	mlx4_free_resource_tracker(dev);
+	mlx4_free_resource_tracker(dev, RES_TR_FREE_ALL);
 err_thread:
 	flush_workqueue(priv->mfunc.master.comm_wq);
 	destroy_workqueue(priv->mfunc.master.comm_wq);
@@ -1566,6 +1880,10 @@ err_slaves:
 		for (port = 1; port <= MLX4_MAX_PORTS; port++)
 			kfree(priv->mfunc.master.slave_state[i].vlan_filter[port]);
 	}
+	kfree(priv->mfunc.master.vf_oper);
+err_comm_oper:
+	kfree(priv->mfunc.master.vf_admin);
+err_comm_admin:
 	kfree(priv->mfunc.master.slave_state);
 err_comm:
 	iounmap(priv->mfunc.comm);
@@ -1582,6 +1900,7 @@ int mlx4_cmd_init(struct mlx4_dev *dev)
 	struct mlx4_priv *priv = mlx4_priv(dev);
 
 	mutex_init(&priv->cmd.hcr_mutex);
+	mutex_init(&priv->cmd.slave_cmd_mutex);
 	sema_init(&priv->cmd.poll_sem, 1);
 	priv->cmd.use_events = 0;
 	priv->cmd.toggle     = 1;
@@ -1598,13 +1917,27 @@ int mlx4_cmd_init(struct mlx4_dev *dev)
 		}
 	}
 
+	if (mlx4_is_mfunc(dev)) {
+		priv->mfunc.vhcr = dma_alloc_coherent(&(dev->pdev->dev), PAGE_SIZE,
+						      &priv->mfunc.vhcr_dma,
+						      GFP_KERNEL);
+		if (!priv->mfunc.vhcr)
+			goto err_hcr;
+	}
+
 	priv->cmd.pool = pci_pool_create("mlx4_cmd", dev->pdev,
 					 MLX4_MAILBOX_SIZE,
 					 MLX4_MAILBOX_SIZE, 0);
 	if (!priv->cmd.pool)
-		goto err_hcr;
+		goto err_vhcr;
 
 	return 0;
+
+err_vhcr:
+	if (mlx4_is_mfunc(dev))
+		dma_free_coherent(&(dev->pdev->dev), PAGE_SIZE,
+				  priv->mfunc.vhcr, priv->mfunc.vhcr_dma);
+	priv->mfunc.vhcr = NULL;
 
 err_hcr:
 	if (!mlx4_is_slave(dev))
@@ -1625,12 +1958,11 @@ void mlx4_multi_func_cleanup(struct mlx4_dev *dev)
 				kfree(priv->mfunc.master.slave_state[i].vlan_filter[port]);
 		}
 		kfree(priv->mfunc.master.slave_state);
+		kfree(priv->mfunc.master.vf_admin);
+		kfree(priv->mfunc.master.vf_oper);
 	}
 
 	iounmap(priv->mfunc.comm);
-	dma_free_coherent(&(dev->pdev->dev), PAGE_SIZE,
-		     priv->mfunc.vhcr, priv->mfunc.vhcr_dma);
-	priv->mfunc.vhcr = NULL;
 }
 
 void mlx4_cmd_cleanup(struct mlx4_dev *dev)
@@ -1641,6 +1973,10 @@ void mlx4_cmd_cleanup(struct mlx4_dev *dev)
 
 	if (!mlx4_is_slave(dev))
 		iounmap(priv->cmd.hcr);
+	if (mlx4_is_mfunc(dev))
+		dma_free_coherent(&(dev->pdev->dev), PAGE_SIZE,
+				  priv->mfunc.vhcr, priv->mfunc.vhcr_dma);
+	priv->mfunc.vhcr = NULL;
 }
 
 /*
@@ -1734,3 +2070,115 @@ u32 mlx4_comm_get_version(void)
 {
 	 return ((u32) CMD_CHAN_IF_REV << 8) | (u32) CMD_CHAN_VER;
 }
+
+static int mlx4_get_slave_indx(struct mlx4_dev *dev, int vf)
+{
+	if ((vf < 0) || (vf >= dev->num_vfs)) {
+		mlx4_err(dev, "Bad vf number:%d (number of activated vf: %d)\n", vf, dev->num_vfs);
+		return -EINVAL;
+	}
+
+	return vf+1;
+}
+
+int mlx4_set_vf_mac(struct mlx4_dev *dev, int port, int vf, u64 mac)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct mlx4_vport_state *s_info;
+	int slave;
+
+	if (!mlx4_is_master(dev))
+		return -EPROTONOSUPPORT;
+
+	slave = mlx4_get_slave_indx(dev, vf);
+	if (slave < 0)
+		return -EINVAL;
+
+	s_info = &priv->mfunc.master.vf_admin[slave].vport[port];
+	s_info->mac = mac;
+	mlx4_info(dev, "default mac on vf %d port %d to %llX will take afect only after vf restart\n",
+		  vf, port, s_info->mac);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx4_set_vf_mac);
+
+int mlx4_set_vf_vlan(struct mlx4_dev *dev, int port, int vf, u16 vlan, u8 qos)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct mlx4_vport_state *s_info;
+	int slave;
+
+	if ((!mlx4_is_master(dev)) ||
+	    !(dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_VLAN_CONTROL))
+		return -EPROTONOSUPPORT;
+
+	if ((vlan > 4095) || (qos > 7))
+		return -EINVAL;
+
+	slave = mlx4_get_slave_indx(dev, vf);
+	if (slave < 0)
+		return -EINVAL;
+
+	s_info = &priv->mfunc.master.vf_admin[slave].vport[port];
+	if ((0 == vlan) && (0 == qos))
+		s_info->default_vlan = MLX4_VGT;
+	else
+		s_info->default_vlan = vlan;
+	s_info->default_qos = qos;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx4_set_vf_vlan);
+
+int mlx4_set_vf_spoofchk(struct mlx4_dev *dev, int port, int vf, bool setting)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct mlx4_vport_state *s_info;
+	int slave;
+
+	if ((!mlx4_is_master(dev)) ||
+	    !(dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_FSM))
+		return -EPROTONOSUPPORT;
+
+	slave = mlx4_get_slave_indx(dev, vf);
+	if (slave < 0)
+		return -EINVAL;
+
+	s_info = &priv->mfunc.master.vf_admin[slave].vport[port];
+	s_info->spoofchk = setting;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx4_set_vf_spoofchk);
+
+int mlx4_get_vf_config(struct mlx4_dev *dev, int port, int vf, struct ifla_vf_info *ivf)
+{
+	struct mlx4_priv *priv = mlx4_priv(dev);
+	struct mlx4_vport_state *s_info;
+	int slave;
+
+	if (!mlx4_is_master(dev))
+		return -EPROTONOSUPPORT;
+
+	slave = mlx4_get_slave_indx(dev, vf);
+	if (slave < 0)
+		return -EINVAL;
+
+	s_info = &priv->mfunc.master.vf_admin[slave].vport[port];
+	ivf->vf = vf;
+
+	/* need to convert it to a func */
+	ivf->mac[0] = ((s_info->mac >> (5*8)) & 0xff);
+	ivf->mac[1] = ((s_info->mac >> (4*8)) & 0xff);
+	ivf->mac[2] = ((s_info->mac >> (3*8)) & 0xff);
+	ivf->mac[3] = ((s_info->mac >> (2*8)) & 0xff);
+	ivf->mac[4] = ((s_info->mac >> (1*8)) & 0xff);
+	ivf->mac[5] = ((s_info->mac)  & 0xff);
+
+	ivf->vlan	= s_info->default_vlan;
+	ivf->qos	= s_info->default_qos;
+	ivf->tx_rate	= s_info->tx_rate;
+	ivf->spoofchk	= s_info->spoofchk;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mlx4_get_vf_config);

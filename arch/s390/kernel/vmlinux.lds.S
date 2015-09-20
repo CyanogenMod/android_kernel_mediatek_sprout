@@ -45,7 +45,7 @@ SECTIONS
 
 	.dummy : { *(.dummy) } :data
 
-	RODATA
+	RO_DATA_SECTION(PAGE_SIZE)
 
 #ifdef CONFIG_SHARED_KERNEL
 	. = ALIGN(0x100000);	/* VM shared segments are 1MB aligned */
@@ -73,6 +73,10 @@ SECTIONS
 	*/
 	.exit.text : {
 		EXIT_TEXT
+	}
+
+	.exit.data : {
+		EXIT_DATA
 	}
 
 	/* early.c uses stsi, which requires page aligned data. */

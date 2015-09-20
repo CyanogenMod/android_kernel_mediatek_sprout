@@ -377,7 +377,7 @@ int hvsilib_open(struct hvsi_priv *pv, struct hvc_struct *hp)
 	pr_devel("HVSI@%x: open !\n", pv->termno);
 
 	/* Keep track of the tty data structure */
-	pv->tty = tty_kref_get(hp->tty);
+	pv->tty = tty_port_tty_get(&hp->port);
 
 	hvsilib_establish(pv);
 
@@ -400,7 +400,7 @@ void hvsilib_close(struct hvsi_priv *pv, struct hvc_struct *hp)
 		spin_unlock_irqrestore(&hp->lock, flags);
 
 		/* Clear our own DTR */
-		if (!pv->tty || (pv->tty->termios->c_cflag & HUPCL))
+		if (!pv->tty || (pv->tty->termios.c_cflag & HUPCL))
 			hvsilib_write_mctrl(pv, 0);
 
 		/* Tear down the connection */

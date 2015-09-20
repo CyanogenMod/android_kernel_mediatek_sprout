@@ -284,7 +284,7 @@ static int logfs_rmdir(struct inode *dir, struct dentry *dentry)
 #define IMPLICIT_NODES 2
 static int __logfs_readdir(struct file *file, void *buf, filldir_t filldir)
 {
-	struct inode *dir = file->f_dentry->d_inode;
+	struct inode *dir = file_inode(file);
 	loff_t pos = file->f_pos - IMPLICIT_NODES;
 	struct page *page;
 	struct logfs_disk_dentry *dd;
@@ -320,7 +320,7 @@ static int __logfs_readdir(struct file *file, void *buf, filldir_t filldir)
 
 static int logfs_readdir(struct file *file, void *buf, filldir_t filldir)
 {
-	struct inode *inode = file->f_dentry->d_inode;
+	struct inode *inode = file_inode(file);
 	ino_t pino = parent_ino(file->f_dentry);
 	int err;
 
@@ -349,7 +349,7 @@ static void logfs_set_name(struct logfs_disk_dentry *dd, struct qstr *name)
 }
 
 static struct dentry *logfs_lookup(struct inode *dir, struct dentry *dentry,
-		struct nameidata *nd)
+		unsigned int flags)
 {
 	struct page *page;
 	struct logfs_disk_dentry *dd;
@@ -502,7 +502,7 @@ static int logfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 }
 
 static int logfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-		struct nameidata *nd)
+		bool excl)
 {
 	struct inode *inode;
 

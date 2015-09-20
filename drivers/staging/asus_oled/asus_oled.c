@@ -42,8 +42,6 @@
 #define ASUS_OLED_NAME			"asus-oled"
 #define ASUS_OLED_UNDERSCORE_NAME	"asus_oled"
 
-#define ASUS_OLED_ERROR			"Asus OLED Display Error: "
-
 #define ASUS_OLED_STATIC		's'
 #define ASUS_OLED_ROLL			'r'
 #define ASUS_OLED_FLASH			'f'
@@ -57,8 +55,9 @@
 #define USB_DEVICE_ID_ASUS_LCM2     0x175b
 
 MODULE_AUTHOR("Jakub Schmidtke, sjakub@gmail.com");
-MODULE_DESCRIPTION("Asus OLED Driver v" ASUS_OLED_VERSION);
+MODULE_DESCRIPTION("Asus OLED Driver");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(ASUS_OLED_VERSION);
 
 static struct class *oled_class;
 static int oled_num;
@@ -138,6 +137,7 @@ struct asus_oled_dev {
 	size_t			buf_size;
 	char			*buf;
 	uint8_t			enabled;
+	uint8_t			enabled_post_resume;
 	struct device		*dev;
 };
 
@@ -164,11 +164,8 @@ static void enable_oled(struct asus_oled_dev *odev, uint8_t enabl)
 	struct asus_oled_packet *packet;
 
 	packet = kzalloc(sizeof(struct asus_oled_packet), GFP_KERNEL);
-
-	if (!packet) {
-		dev_err(&odev->udev->dev, "out of memory\n");
+	if (!packet)
 		return;
-	}
 
 	setup_packet_header(packet, 0x20, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00);
 
@@ -323,11 +320,8 @@ static void send_data(struct asus_oled_dev *odev)
 	struct asus_oled_packet *packet;
 
 	packet = kzalloc(sizeof(struct asus_oled_packet), GFP_KERNEL);
-
-	if (!packet) {
-		dev_err(&odev->udev->dev, "out of memory\n");
+	if (!packet)
 		return;
-	}
 
 	if (odev->pack_mode == PACK_MODE_G1) {
 		/* When sending roll-mode data the display updated only
@@ -383,13 +377,13 @@ static int append_values(struct asus_oled_dev *odev, uint8_t val, size_t count)
 
 		default:
 			i = 0;
-			printk(ASUS_OLED_ERROR "Unknown OLED Pack Mode: %d!\n",
+			dev_err(odev->dev, "Unknown OLED Pack Mode: %d!\n",
 			       odev->pack_mode);
 			break;
 		}
 
 		if (i >= odev->buf_size) {
-			printk(ASUS_OLED_ERROR "Buffer overflow! Report a bug:"
+			dev_err(odev->dev, "Buffer overflow! Report a bug:"
 			       "offs: %d >= %d i: %d (x: %d y: %d)\n",
 			       (int) odev->buf_offs, (int) odev->buf_size,
 			       (int) i, (int) x, (int) y);
@@ -435,7 +429,7 @@ static ssize_t odev_set_picture(struct asus_oled_dev *odev,
 		odev->buf = kmalloc(odev->buf_size, GFP_KERNEL);
 		if (odev->buf == NULL) {
 			odev->buf_size = 0;
-			printk(ASUS_OLED_ERROR "Out of memory!\n");
+			dev_err(odev->dev, "Out of memory!\n");
 			return -ENOMEM;
 		}
 
@@ -473,7 +467,7 @@ static ssize_t odev_set_picture(struct asus_oled_dev *odev,
 			odev->pic_mode = buf[1];
 			break;
 		default:
-			printk(ASUS_OLED_ERROR "Wrong picture mode: '%c'.\n",
+			dev_err(odev->dev, "Wrong picture mode: '%c'.\n",
 			       buf[1]);
 			return -EIO;
 			break;
@@ -533,7 +527,7 @@ static ssize_t odev_set_picture(struct asus_oled_dev *odev,
 
 		if (odev->buf == NULL) {
 			odev->buf_size = 0;
-			printk(ASUS_OLED_ERROR "Out of memory!\n");
+			dev_err(odev->dev, "Out of memory!\n");
 			return -ENOMEM;
 		}
 
@@ -593,15 +587,15 @@ static ssize_t odev_set_picture(struct asus_oled_dev *odev,
 	return count;
 
 error_width:
-	printk(ASUS_OLED_ERROR "Wrong picture width specified.\n");
+	dev_err(odev->dev, "Wrong picture width specified.\n");
 	return -EIO;
 
 error_height:
-	printk(ASUS_OLED_ERROR "Wrong picture height specified.\n");
+	dev_err(odev->dev, "Wrong picture height specified.\n");
 	return -EIO;
 
 error_header:
-	printk(ASUS_OLED_ERROR "Wrong picture header.\n");
+	dev_err(odev->dev, "Wrong picture header.\n");
 	return -EIO;
 }
 
@@ -665,11 +659,8 @@ static int asus_oled_probe(struct usb_interface *interface,
 	}
 
 	odev = kzalloc(sizeof(struct asus_oled_dev), GFP_KERNEL);
-
-	if (odev == NULL) {
-		dev_err(&interface->dev, "Out of memory\n");
+	if (odev == NULL)
 		return -ENOMEM;
-	}
 
 	odev->udev = usb_get_dev(udev);
 	odev->pic_mode = ASUS_OLED_STATIC;
@@ -766,11 +757,45 @@ static void asus_oled_disconnect(struct usb_interface *interface)
 	dev_info(&interface->dev, "Disconnected Asus OLED device\n");
 }
 
+#ifdef CONFIG_PM
+static int asus_oled_suspend(struct usb_interface *intf, pm_message_t message)
+{
+	struct asus_oled_dev *odev;
+
+	odev = usb_get_intfdata(intf);
+	if (!odev)
+		return -ENODEV;
+
+	odev->enabled_post_resume = odev->enabled;
+	enable_oled(odev, 0);
+
+	return 0;
+}
+
+static int asus_oled_resume(struct usb_interface *intf)
+{
+	struct asus_oled_dev *odev;
+
+	odev = usb_get_intfdata(intf);
+	if (!odev)
+		return -ENODEV;
+
+	enable_oled(odev, odev->enabled_post_resume);
+
+	return 0;
+}
+#else
+#define asus_oled_suspend NULL
+#define asus_oled_resume NULL
+#endif
+
 static struct usb_driver oled_driver = {
 	.name =		ASUS_OLED_NAME,
 	.probe =	asus_oled_probe,
 	.disconnect =	asus_oled_disconnect,
 	.id_table =	id_table,
+	.suspend =	asus_oled_suspend,
+	.resume =	asus_oled_resume,
 };
 
 static CLASS_ATTR_STRING(version, S_IRUGO,
@@ -782,20 +807,20 @@ static int __init asus_oled_init(void)
 	oled_class = class_create(THIS_MODULE, ASUS_OLED_UNDERSCORE_NAME);
 
 	if (IS_ERR(oled_class)) {
-		err("Error creating " ASUS_OLED_UNDERSCORE_NAME " class");
+		pr_err("Error creating " ASUS_OLED_UNDERSCORE_NAME " class\n");
 		return PTR_ERR(oled_class);
 	}
 
 	retval = class_create_file(oled_class, &class_attr_version.attr);
 	if (retval) {
-		err("Error creating class version file");
+		pr_err("Error creating class version file\n");
 		goto error;
 	}
 
 	retval = usb_register(&oled_driver);
 
 	if (retval) {
-		err("usb_register failed. Error number %d", retval);
+		pr_err("usb_register failed. Error number %d\n", retval);
 		goto error;
 	}
 

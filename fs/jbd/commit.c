@@ -162,8 +162,17 @@ static void journal_do_submit_data(struct buffer_head **wbuf, int bufs,
 
 	for (i = 0; i < bufs; i++) {
 		wbuf[i]->b_end_io = end_buffer_write_sync;
-		/* We use-up our safety reference in submit_bh() */
-		submit_bh(write_op, wbuf[i]);
+		/*
+		 * Here we write back pagecache data that may be mmaped. Since
+		 * we cannot afford to clean the page and set PageWriteback
+		 * here due to lock ordering (page lock ranks above transaction
+		 * start), the data can change while IO is in flight. Tell the
+		 * block layer it should bounce the bio pages if stable data
+		 * during write is required.
+		 *
+		 * We use up our safety reference in submit_bh().
+		 */
+		_submit_bh(write_op, wbuf[i], 1 << BIO_SNAP_STABLE);
 	}
 }
 
@@ -303,6 +312,7 @@ void journal_commit_transaction(journal_t *journal)
 	int tag_flag;
 	int i;
 	struct blk_plug plug;
+	int write_op = WRITE;
 
 	/*
 	 * First job: lock down the current transaction and wait for
@@ -312,7 +322,16 @@ void journal_commit_transaction(journal_t *journal)
 	/* Do we need to erase the effects of a prior journal_flush? */
 	if (journal->j_flags & JFS_FLUSHED) {
 		jbd_debug(3, "super block updated\n");
-		journal_update_superblock(journal, 1);
+		mutex_lock(&journal->j_checkpoint_mutex);
+		/*
+		 * We hold j_checkpoint_mutex so tail cannot change under us.
+		 * We don't need any special data guarantees for writing sb
+		 * since journal is empty and it is ok for write to be
+		 * flushed only with transaction commit.
+		 */
+		journal_update_sb_log_tail(journal, journal->j_tail_sequence,
+					   journal->j_tail, WRITE_SYNC);
+		mutex_unlock(&journal->j_checkpoint_mutex);
 	} else {
 		jbd_debug(3, "superblock not updated\n");
 	}
@@ -418,13 +437,16 @@ void journal_commit_transaction(journal_t *journal)
 
 	jbd_debug (3, "JBD: commit phase 2\n");
 
+	if (tid_geq(journal->j_commit_waited, commit_transaction->t_tid))
+		write_op = WRITE_SYNC;
+
 	/*
 	 * Now start flushing things to disk, in the order they appear
 	 * on the transaction lists.  Data blocks go first.
 	 */
 	blk_start_plug(&plug);
 	err = journal_submit_data_buffers(journal, commit_transaction,
-					  WRITE_SYNC);
+					  write_op);
 	blk_finish_plug(&plug);
 
 	/*
@@ -483,7 +505,7 @@ void journal_commit_transaction(journal_t *journal)
 
 	blk_start_plug(&plug);
 
-	journal_write_revoke_records(journal, commit_transaction, WRITE_SYNC);
+	journal_write_revoke_records(journal, commit_transaction, write_op);
 
 	/*
 	 * If we found any dirty or locked buffers, then we should have
@@ -654,7 +676,17 @@ start_journal_io:
 				clear_buffer_dirty(bh);
 				set_buffer_uptodate(bh);
 				bh->b_end_io = journal_end_buffer_io_sync;
-				submit_bh(WRITE_SYNC, bh);
+				/*
+				 * In data=journal mode, here we can end up
+				 * writing pagecache data that might be
+				 * mmapped. Since we can't afford to clean the
+				 * page and set PageWriteback (see the comment
+				 * near the other use of _submit_bh()), the
+				 * data can change while the write is in
+				 * flight.  Tell the block layer to bounce the
+				 * bio pages if stable pages are required.
+				 */
+				_submit_bh(write_op, bh, 1 << BIO_SNAP_STABLE);
 			}
 			cond_resched();
 

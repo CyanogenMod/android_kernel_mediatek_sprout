@@ -4,13 +4,14 @@
 
 obj-y += setup.o init.o cmdline.o env.o time.o reset.o irq.o \
     pci.o bonito-irq.o mem.o machtype.o platform.o
-obj-$(CONFIG_GENERIC_GPIO) += gpio.o
+obj-$(CONFIG_GPIOLIB) += gpio.o
 
 #
 # Serial port support
 #
 obj-$(CONFIG_EARLY_PRINTK) += early_printk.o
-obj-$(CONFIG_SERIAL_8250) += serial.o
+loongson-serial-$(CONFIG_SERIAL_8250) := serial.o
+obj-y += $(loongson-serial-m) $(loongson-serial-y)
 obj-$(CONFIG_LOONGSON_UART_BASE) += uart_base.o
 obj-$(CONFIG_LOONGSON_MC146818) += rtc.o
 

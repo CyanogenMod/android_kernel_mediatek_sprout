@@ -170,15 +170,18 @@ void __flush_dcache_page(struct address_space *mapping, struct page *page)
 	if (!PageHighMem(page)) {
 		__cpuc_flush_dcache_area(page_address(page), PAGE_SIZE);
 	} else {
-		void *addr = kmap_high_get(page);
-		if (addr) {
-			__cpuc_flush_dcache_area(addr, PAGE_SIZE);
-			kunmap_high(page);
-		} else if (cache_is_vipt()) {
-			/* unmapped pages might still be cached */
+		void *addr;
+
+		if (cache_is_vipt_nonaliasing()) {
 			addr = kmap_atomic(page);
 			__cpuc_flush_dcache_area(addr, PAGE_SIZE);
 			kunmap_atomic(addr);
+		} else {
+			addr = kmap_high_get(page);
+			if (addr) {
+				__cpuc_flush_dcache_area(addr, PAGE_SIZE);
+				kunmap_high(page);
+			}
 		}
 	}
 
@@ -196,7 +199,6 @@ static void __flush_dcache_aliases(struct address_space *mapping, struct page *p
 {
 	struct mm_struct *mm = current->active_mm;
 	struct vm_area_struct *mpnt;
-	struct prio_tree_iter iter;
 	pgoff_t pgoff;
 
 	/*
@@ -208,7 +210,7 @@ static void __flush_dcache_aliases(struct address_space *mapping, struct page *p
 	pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
 
 	flush_dcache_mmap_lock(mapping);
-	vma_prio_tree_foreach(mpnt, &iter, &mapping->i_mmap, pgoff, pgoff) {
+	vma_interval_tree_foreach(mpnt, &mapping->i_mmap, pgoff, pgoff) {
 		unsigned long offset;
 
 		/*

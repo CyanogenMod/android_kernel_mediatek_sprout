@@ -246,7 +246,11 @@ __cheetah_flush_tlb_page:	/* 22 insns */
 	be,pn		%icc, 1f
 	 andn		%o1, 1, %o3
 	stxa		%g0, [%o3] ASI_IMMU_DEMAP
+<<<<<<< HEAD
 1:	stxa		%g0, [%o3] ASI_DMMU_DEMAP
+=======
+1:	stxa		%g0, [%o3] ASI_DMMU_DEMAP	
+>>>>>>> v3.10.88
 	membar		#Sync
 	stxa		%g2, [%o4] ASI_DMMU
 	sethi		%hi(KERNBASE), %o4
@@ -549,8 +553,8 @@ xcall_sync_tick:
 
 	.globl		xcall_fetch_glob_regs
 xcall_fetch_glob_regs:
-	sethi		%hi(global_reg_snapshot), %g1
-	or		%g1, %lo(global_reg_snapshot), %g1
+	sethi		%hi(global_cpu_snapshot), %g1
+	or		%g1, %lo(global_cpu_snapshot), %g1
 	__GET_CPUID(%g2)
 	sllx		%g2, 6, %g3
 	add		%g1, %g3, %g1
@@ -575,6 +579,66 @@ xcall_fetch_glob_regs:
 	add		%g7, %g2, %g7
 	ldx		[%g7 + TRAP_PER_CPU_THREAD], %g3
 	stx		%g3, [%g1 + GR_SNAP_THREAD]
+	retry
+
+	.globl		xcall_fetch_glob_pmu
+xcall_fetch_glob_pmu:
+	sethi		%hi(global_cpu_snapshot), %g1
+	or		%g1, %lo(global_cpu_snapshot), %g1
+	__GET_CPUID(%g2)
+	sllx		%g2, 6, %g3
+	add		%g1, %g3, %g1
+	rd		%pic, %g7
+	stx		%g7, [%g1 + (4 * 8)]
+	rd		%pcr, %g7
+	stx		%g7, [%g1 + (0 * 8)]
+	retry
+
+	.globl		xcall_fetch_glob_pmu_n4
+xcall_fetch_glob_pmu_n4:
+	sethi		%hi(global_cpu_snapshot), %g1
+	or		%g1, %lo(global_cpu_snapshot), %g1
+	__GET_CPUID(%g2)
+	sllx		%g2, 6, %g3
+	add		%g1, %g3, %g1
+
+	ldxa		[%g0] ASI_PIC, %g7
+	stx		%g7, [%g1 + (4 * 8)]
+	mov		0x08, %g3
+	ldxa		[%g3] ASI_PIC, %g7
+	stx		%g7, [%g1 + (5 * 8)]
+	mov		0x10, %g3
+	ldxa		[%g3] ASI_PIC, %g7
+	stx		%g7, [%g1 + (6 * 8)]
+	mov		0x18, %g3
+	ldxa		[%g3] ASI_PIC, %g7
+	stx		%g7, [%g1 + (7 * 8)]
+
+	mov		%o0, %g2
+	mov		%o1, %g3
+	mov		%o5, %g7
+
+	mov		HV_FAST_VT_GET_PERFREG, %o5
+	mov		3, %o0
+	ta		HV_FAST_TRAP
+	stx		%o1, [%g1 + (3 * 8)]
+	mov		HV_FAST_VT_GET_PERFREG, %o5
+	mov		2, %o0
+	ta		HV_FAST_TRAP
+	stx		%o1, [%g1 + (2 * 8)]
+	mov		HV_FAST_VT_GET_PERFREG, %o5
+	mov		1, %o0
+	ta		HV_FAST_TRAP
+	stx		%o1, [%g1 + (1 * 8)]
+	mov		HV_FAST_VT_GET_PERFREG, %o5
+	mov		0, %o0
+	ta		HV_FAST_TRAP
+	stx		%o1, [%g1 + (0 * 8)]
+
+	mov		%g2, %o0
+	mov		%g3, %o1
+	mov		%g7, %o5
+
 	retry
 
 #ifdef DCACHE_ALIASING_POSSIBLE

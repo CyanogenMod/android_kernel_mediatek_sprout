@@ -51,6 +51,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
+#include <linux/sunrpc/addr.h>
 
 #include "xprt_rdma.h"
 
@@ -199,6 +200,7 @@ xprt_rdma_connect_worker(struct work_struct *work)
 	struct rpc_xprt *xprt = &r_xprt->xprt;
 	int rc = 0;
 
+<<<<<<< HEAD
 	if (!xprt->shutdown) {
 		current->flags |= PF_FSTRANS;
 		xprt_clear_connected(xprt);
@@ -214,6 +216,17 @@ xprt_rdma_connect_worker(struct work_struct *work)
 out:
 	xprt_wake_pending_tasks(xprt, rc);
 out_clear:
+=======
+	current->flags |= PF_FSTRANS;
+	xprt_clear_connected(xprt);
+
+	dprintk("RPC:       %s: %sconnect\n", __func__,
+			r_xprt->rx_ep.rep_connected != 0 ? "re" : "");
+	rc = rpcrdma_ep_connect(&r_xprt->rx_ep, &r_xprt->rx_ia);
+	if (rc)
+		xprt_wake_pending_tasks(xprt, rc);
+
+>>>>>>> v3.10.88
 	dprintk("RPC:       %s: exit\n", __func__);
 	xprt_clear_connecting(xprt);
 	current->flags &= ~PF_FSTRANS;
@@ -432,9 +445,8 @@ xprt_rdma_set_port(struct rpc_xprt *xprt, u16 port)
 }
 
 static void
-xprt_rdma_connect(struct rpc_task *task)
+xprt_rdma_connect(struct rpc_xprt *xprt, struct rpc_task *task)
 {
-	struct rpc_xprt *xprt = (struct rpc_xprt *)task->tk_xprt;
 	struct rpcrdma_xprt *r_xprt = rpcx_to_rdmax(xprt);
 
 	if (r_xprt->rx_ep.rep_connected != 0) {
@@ -481,7 +493,7 @@ xprt_rdma_reserve_xprt(struct rpc_xprt *xprt, struct rpc_task *task)
 static void *
 xprt_rdma_allocate(struct rpc_task *task, size_t size)
 {
-	struct rpc_xprt *xprt = task->tk_xprt;
+	struct rpc_xprt *xprt = task->tk_rqstp->rq_xprt;
 	struct rpcrdma_req *req, *nreq;
 
 	req = rpcrdma_buffer_get(&rpcx_to_rdmax(xprt)->rx_buf);
@@ -633,7 +645,7 @@ static int
 xprt_rdma_send_request(struct rpc_task *task)
 {
 	struct rpc_rqst *rqst = task->tk_rqstp;
-	struct rpc_xprt *xprt = task->tk_xprt;
+	struct rpc_xprt *xprt = rqst->rq_xprt;
 	struct rpcrdma_req *req = rpcr_to_rdmar(rqst);
 	struct rpcrdma_xprt *r_xprt = rpcx_to_rdmax(xprt);
 

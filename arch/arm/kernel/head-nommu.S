@@ -32,15 +32,21 @@
  * numbers for r1.
  *
  */
-	.arm
 
 	__HEAD
+
+#ifdef CONFIG_CPU_THUMBONLY
+	.thumb
+ENTRY(stext)
+#else
+	.arm
 ENTRY(stext)
 
  THUMB(	adr	r9, BSYM(1f)	)	@ Kernel is always entered in ARM.
  THUMB(	bx	r9		)	@ If this is a Thumb-2 kernel,
  THUMB(	.thumb			)	@ switch to Thumb now.
  THUMB(1:			)
+#endif
 
 	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9 @ ensure svc mode
 						@ and irqs disabled
@@ -68,7 +74,7 @@ __after_proc_init:
 	 * CP15 system control register value returned in r0 from
 	 * the CPU init function.
 	 */
-#ifdef CONFIG_ALIGNMENT_TRAP
+#if defined(CONFIG_ALIGNMENT_TRAP) && __LINUX_ARM_ARCH__ < 6
 	orr	r0, r0, #CR_A
 #else
 	bic	r0, r0, #CR_A

@@ -631,6 +631,8 @@ static int data_submit_dma(struct fpga_device *priv, struct data_buf *buf)
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t cookie;
 	dma_addr_t dst, src;
+	unsigned long dma_flags = DMA_COMPL_SKIP_DEST_UNMAP |
+				  DMA_COMPL_SKIP_SRC_UNMAP;
 
 	dst_sg = buf->vb.sglist;
 	dst_nents = buf->vb.sglen;
@@ -666,7 +668,7 @@ static int data_submit_dma(struct fpga_device *priv, struct data_buf *buf)
 	src = SYS_FPGA_BLOCK;
 	tx = chan->device->device_prep_dma_memcpy(chan, dst, src,
 						  REG_BLOCK_SIZE,
-						  DMA_PREP_INTERRUPT);
+						  dma_flags);
 	if (!tx) {
 		dev_err(priv->dev, "unable to prep SYS-FPGA DMA\n");
 		return -ENOMEM;
@@ -749,7 +751,7 @@ static irqreturn_t data_irq(int irq, void *dev_id)
 	submitted = true;
 
 	/* Start the DMA Engine */
-	dma_async_memcpy_issue_pending(priv->chan);
+	dma_async_issue_pending(priv->chan);
 
 out:
 	/* If no DMA was submitted, re-enable interrupts */
@@ -1243,8 +1245,6 @@ static int data_mmap(struct file *filp, struct vm_area_struct *vma)
 		return -EINVAL;
 	}
 
-	/* IO memory (stop cacheing) */
-	vma->vm_flags |= VM_IO | VM_RESERVED;
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 
 	return io_remap_pfn_range(vma, vma->vm_start, addr, vsize,

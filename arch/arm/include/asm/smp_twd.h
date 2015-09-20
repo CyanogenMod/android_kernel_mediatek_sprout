@@ -34,6 +34,7 @@ struct twd_local_timer name __initdata = {	\
 
 int twd_local_timer_register(struct twd_local_timer *);
 
+<<<<<<< HEAD
 #ifdef CONFIG_HAVE_ARM_TWD
 void twd_local_timer_of_register(void);
 #else
@@ -44,4 +45,6 @@ static inline void twd_local_timer_of_register(void)
 
 int localtimer_set_next_event(unsigned long evt);
 unsigned long localtimer_get_counter(void);
+=======
+>>>>>>> v3.10.88
 #endif

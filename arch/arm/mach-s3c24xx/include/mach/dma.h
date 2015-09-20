@@ -24,7 +24,10 @@
 */
 
 enum dma_ch {
+<<<<<<< HEAD
 	DMACH_DT_PROP = -1,	/* not yet supported, do not use */
+=======
+>>>>>>> v3.10.88
 	DMACH_XD0 = 0,
 	DMACH_XD1,
 	DMACH_SDI,
@@ -48,6 +51,10 @@ enum dma_ch {
 	DMACH_UART2_SRC2,
 	DMACH_UART3,		/* s3c2443 has extra uart */
 	DMACH_UART3_SRC2,
+	DMACH_SPI0_TX,		/* s3c2443/2416/2450 hsspi0 */
+	DMACH_SPI0_RX,		/* s3c2443/2416/2450 hsspi0 */
+	DMACH_SPI1_TX,		/* s3c2443/2450 hsspi1 */
+	DMACH_SPI1_RX,		/* s3c2443/2450 hsspi1 */
 	DMACH_MAX,		/* the end entry */
 };
 
@@ -84,7 +91,7 @@ enum s3c2410_dma_state {
  *
  * This represents the state of the DMA engine, wrt to the loaded / running
  * transfers. Since we don't have any way of knowing exactly the state of
- * the DMA transfers, we need to know the state to make decisions on wether
+ * the DMA transfers, we need to know the state to make decisions on whether
  * we can
  *
  * S3C2410_DMA_NONE

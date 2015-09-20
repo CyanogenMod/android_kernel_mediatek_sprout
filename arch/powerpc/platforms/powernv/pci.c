@@ -1,3 +1,4 @@
+
 /*
  * Support PCI/PCIe on PowerNV platforms
  *
@@ -26,11 +27,11 @@
 #include <asm/prom.h>
 #include <asm/pci-bridge.h>
 #include <asm/machdep.h>
+#include <asm/msi_bitmap.h>
 #include <asm/ppc-pci.h>
 #include <asm/opal.h>
 #include <asm/iommu.h>
 #include <asm/tce.h>
-#include <asm/abs_addr.h>
 #include <asm/firmware.h>
 
 #include "powernv.h"
@@ -48,43 +49,10 @@ static int pnv_msi_check_device(struct pci_dev* pdev, int nvec, int type)
 	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
 	struct pnv_phb *phb = hose->private_data;
 
-	return (phb && phb->msi_map) ? 0 : -ENODEV;
-}
+	if (pdev->no_64bit_msi && !phb->msi32_support)
+		return -ENODEV;
 
-static unsigned int pnv_get_one_msi(struct pnv_phb *phb)
-{
-	unsigned long flags;
-	unsigned int id, rc;
-
-	spin_lock_irqsave(&phb->lock, flags);
-
-	id = find_next_zero_bit(phb->msi_map, phb->msi_count, phb->msi_next);
-	if (id >= phb->msi_count && phb->msi_next)
-		id = find_next_zero_bit(phb->msi_map, phb->msi_count, 0);
-	if (id >= phb->msi_count) {
-		rc = 0;
-		goto out;
-	}
-	__set_bit(id, phb->msi_map);
-	rc = id + phb->msi_base;
-out:
-	spin_unlock_irqrestore(&phb->lock, flags);
-	return rc;
-}
-
-static void pnv_put_msi(struct pnv_phb *phb, unsigned int hwirq)
-{
-	unsigned long flags;
-	unsigned int id;
-
-	if (WARN_ON(hwirq < phb->msi_base ||
-		    hwirq >= (phb->msi_base + phb->msi_count)))
-		return;
-	id = hwirq - phb->msi_base;
-
-	spin_lock_irqsave(&phb->lock, flags);
-	__clear_bit(id, phb->msi_map);
-	spin_unlock_irqrestore(&phb->lock, flags);
+	return (phb && phb->msi_bmp.bitmap) ? 0 : -ENODEV;
 }
 
 static int pnv_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
@@ -93,7 +61,8 @@ static int pnv_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 	struct pnv_phb *phb = hose->private_data;
 	struct msi_desc *entry;
 	struct msi_msg msg;
-	unsigned int hwirq, virq;
+	int hwirq;
+	unsigned int virq;
 	int rc;
 
 	if (WARN_ON(!phb))
@@ -105,25 +74,25 @@ static int pnv_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
 				pci_name(pdev));
 			return -ENXIO;
 		}
-		hwirq = pnv_get_one_msi(phb);
-		if (!hwirq) {
+		hwirq = msi_bitmap_alloc_hwirqs(&phb->msi_bmp, 1);
+		if (hwirq < 0) {
 			pr_warn("%s: Failed to find a free MSI\n",
 				pci_name(pdev));
 			return -ENOSPC;
 		}
-		virq = irq_create_mapping(NULL, hwirq);
+		virq = irq_create_mapping(NULL, phb->msi_base + hwirq);
 		if (virq == NO_IRQ) {
 			pr_warn("%s: Failed to map MSI to linux irq\n",
 				pci_name(pdev));
-			pnv_put_msi(phb, hwirq);
+			msi_bitmap_free_hwirqs(&phb->msi_bmp, hwirq, 1);
 			return -ENOMEM;
 		}
-		rc = phb->msi_setup(phb, pdev, hwirq, entry->msi_attrib.is_64,
-				    &msg);
+		rc = phb->msi_setup(phb, pdev, phb->msi_base + hwirq,
+				    virq, entry->msi_attrib.is_64, &msg);
 		if (rc) {
 			pr_warn("%s: Failed to setup MSI\n", pci_name(pdev));
 			irq_dispose_mapping(virq);
-			pnv_put_msi(phb, hwirq);
+			msi_bitmap_free_hwirqs(&phb->msi_bmp, hwirq, 1);
 			return rc;
 		}
 		irq_set_msi_desc(virq, entry);
@@ -145,7 +114,8 @@ static void pnv_teardown_msi_irqs(struct pci_dev *pdev)
 		if (entry->irq == NO_IRQ)
 			continue;
 		irq_set_msi_desc(entry->irq, NULL);
-		pnv_put_msi(phb, virq_to_hw(entry->irq));
+		msi_bitmap_free_hwirqs(&phb->msi_bmp,
+			virq_to_hw(entry->irq) - phb->msi_base, 1);
 		irq_dispose_mapping(entry->irq);
 	}
 }
@@ -363,48 +333,6 @@ struct pci_ops pnv_pci_ops = {
 	.write = pnv_pci_write_config,
 };
 
-
-static void pnv_tce_invalidate(struct iommu_table *tbl,
-			       u64 *startp, u64 *endp)
-{
-	u64 __iomem *invalidate = (u64 __iomem *)tbl->it_index;
-	unsigned long start, end, inc;
-
-	start = __pa(startp);
-	end = __pa(endp);
-
-
-	/* BML uses this case for p6/p7/galaxy2: Shift addr and put in node */
-	if (tbl->it_busno) {
-		start <<= 12;
-		end <<= 12;
-		inc = 128 << 12;
-		start |= tbl->it_busno;
-		end |= tbl->it_busno;
-	}
-	/* p7ioc-style invalidation, 2 TCEs per write */
-	else if (tbl->it_type & TCE_PCI_SWINV_PAIR) {
-		start |= (1ull << 63);
-		end |= (1ull << 63);
-		inc = 16;
-	}
-	/* Default (older HW) */
-	else
-		inc = 128;
-
-	end |= inc - 1;		/* round up end to be different than start */
-
-	mb(); /* Ensure above stores are visible */
-	while (start <= end) {
-		__raw_writeq(start, invalidate);
-		start += inc;
-	}
-	/* The iommu layer will do another mb() for us on build() and
-	 * we don't care on free()
-	 */
-}
-
-
 static int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
 			 unsigned long uaddr, enum dma_data_direction direction,
 			 struct dma_attrs *attrs)
@@ -429,7 +357,7 @@ static int pnv_tce_build(struct iommu_table *tbl, long index, long npages,
 	 * of flags if that becomes the case
 	 */
 	if (tbl->it_type & TCE_PCI_SWINV_CREATE)
-		pnv_tce_invalidate(tbl, tces, tcep - 1);
+		pnv_pci_ioda_tce_invalidate(tbl, tces, tcep - 1);
 
 	return 0;
 }
@@ -444,7 +372,12 @@ static void pnv_tce_free(struct iommu_table *tbl, long index, long npages)
 		*(tcep++) = 0;
 
 	if (tbl->it_type & TCE_PCI_SWINV_FREE)
-		pnv_tce_invalidate(tbl, tces, tcep - 1);
+		pnv_pci_ioda_tce_invalidate(tbl, tces, tcep - 1);
+}
+
+static unsigned long pnv_tce_get(struct iommu_table *tbl, long index)
+{
+	return ((u64 *)tbl->it_base)[index - tbl->it_offset];
 }
 
 void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
@@ -460,8 +393,7 @@ void pnv_pci_setup_iommu_table(struct iommu_table *tbl,
 	tbl->it_type = TCE_PCI;
 }
 
-static struct iommu_table * __devinit
-pnv_pci_setup_bml_iommu(struct pci_controller *hose)
+static struct iommu_table *pnv_pci_setup_bml_iommu(struct pci_controller *hose)
 {
 	struct iommu_table *tbl;
 	const __be64 *basep, *swinvp;
@@ -492,8 +424,8 @@ pnv_pci_setup_bml_iommu(struct pci_controller *hose)
 	return tbl;
 }
 
-static void __devinit pnv_pci_dma_fallback_setup(struct pci_controller *hose,
-						 struct pci_dev *pdev)
+static void pnv_pci_dma_fallback_setup(struct pci_controller *hose,
+				       struct pci_dev *pdev)
 {
 	struct device_node *np = pci_bus_to_OF_node(hose->bus);
 	struct pci_dn *pdn;
@@ -508,7 +440,7 @@ static void __devinit pnv_pci_dma_fallback_setup(struct pci_controller *hose,
 	set_iommu_table_base(&pdev->dev, pdn->iommu_table);
 }
 
-static void __devinit pnv_pci_dma_dev_setup(struct pci_dev *pdev)
+static void pnv_pci_dma_dev_setup(struct pci_dev *pdev)
 {
 	struct pci_controller *hose = pci_bus_to_host(pdev->bus);
 	struct pnv_phb *phb = hose->private_data;
@@ -522,8 +454,20 @@ static void __devinit pnv_pci_dma_dev_setup(struct pci_dev *pdev)
 		pnv_pci_dma_fallback_setup(hose, pdev);
 }
 
-/* Fixup wrong class code in p7ioc root complex */
-static void __devinit pnv_p7ioc_rc_quirk(struct pci_dev *dev)
+void pnv_pci_shutdown(void)
+{
+	struct pci_controller *hose;
+
+	list_for_each_entry(hose, &hose_list, list_node) {
+		struct pnv_phb *phb = hose->private_data;
+
+		if (phb && phb->shutdown)
+			phb->shutdown(phb);
+	}
+}
+
+/* Fixup wrong class code in p7ioc and p8 root complex */
+static void pnv_p7ioc_rc_quirk(struct pci_dev *dev)
 {
 	dev->class = PCI_CLASS_BRIDGE_PCI << 8;
 }
@@ -588,6 +532,10 @@ void __init pnv_pci_init(void)
 		if (!found_ioda)
 			for_each_compatible_node(np, NULL, "ibm,p5ioc2")
 				pnv_pci_init_p5ioc2_hub(np);
+
+		/* Look for ioda2 built-in PHB3's */
+		for_each_compatible_node(np, NULL, "ibm,ioda2-phb")
+			pnv_pci_init_ioda2_phb(np);
 	}
 
 	/* Setup the linkage between OF nodes and PHBs */
@@ -597,6 +545,7 @@ void __init pnv_pci_init(void)
 	ppc_md.pci_dma_dev_setup = pnv_pci_dma_dev_setup;
 	ppc_md.tce_build = pnv_tce_build;
 	ppc_md.tce_free = pnv_tce_free;
+	ppc_md.tce_get = pnv_tce_get;
 	ppc_md.pci_probe_mode = pnv_pci_probe_mode;
 	set_pci_dma_ops(&dma_iommu_ops);
 

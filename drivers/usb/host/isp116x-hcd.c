@@ -1488,7 +1488,7 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 	spin_unlock_irq(&isp116x->lock);
 
 	hcd->state = HC_STATE_RESUMING;
-	msleep(20);
+	msleep(USB_RESUME_TIMEOUT);
 
 	/* Go operational */
 	spin_lock_irq(&isp116x->lock);
@@ -1557,7 +1557,7 @@ static int isp116x_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devinit isp116x_probe(struct platform_device *pdev)
+static int isp116x_probe(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd;
 	struct isp116x *isp116x;

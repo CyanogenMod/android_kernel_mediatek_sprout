@@ -1,5 +1,5 @@
 /*
- *    Copyright IBM Corp. 1999,2012
+ *    Copyright IBM Corp. 1999, 2012
  *    Author(s): Hartmut Penner <hp@de.ibm.com>,
  *		 Martin Schwidefsky <schwidefsky@de.ibm.com>,
  *		 Denis Joseph Barrow,
@@ -142,9 +142,9 @@ struct _lowcore {
 	__u8	pad_0x02fc[0x0300-0x02fc];	/* 0x02fc */
 
 	/* Interrupt response block */
-	__u8	irb[64];			/* 0x0300 */
+	__u8	irb[96];			/* 0x0300 */
 
-	__u8	pad_0x0340[0x0e00-0x0340];	/* 0x0340 */
+	__u8	pad_0x0360[0x0e00-0x0360];	/* 0x0360 */
 
 	/*
 	 * 0xe00 contains the address of the IPL Parameter Information
@@ -288,12 +288,13 @@ struct _lowcore {
 	__u8	pad_0x03a0[0x0400-0x03a0];	/* 0x03a0 */
 
 	/* Interrupt response block. */
-	__u8	irb[64];			/* 0x0400 */
+	__u8	irb[96];			/* 0x0400 */
+	__u8	pad_0x0460[0x0480-0x0460];	/* 0x0460 */
 
 	/* Per cpu primary space access list */
-	__u32	paste[16];			/* 0x0440 */
+	__u32	paste[16];			/* 0x0480 */
 
-	__u8	pad_0x0480[0x0e00-0x0480];	/* 0x0480 */
+	__u8	pad_0x04c0[0x0e00-0x04c0];	/* 0x04c0 */
 
 	/*
 	 * 0xe00 contains the address of the IPL Parameter Information
@@ -302,12 +303,7 @@ struct _lowcore {
 	 */
 	__u64	ipib;				/* 0x0e00 */
 	__u32	ipib_checksum;			/* 0x0e08 */
-	/*
-	 * Because the vmcore_info pointer is not 8 byte aligned it never
-	 * should not be accessed directly. For accessing the pointer, first
-	 * copy it to a local pointer variable.
-	 */
-	__u8	vmcore_info[8];			/* 0x0e0c */
+	__u64	vmcore_info;			/* 0x0e0c */
 	__u8	pad_0x0e14[0x0e18-0x0e14];	/* 0x0e14 */
 	__u64	os_info;			/* 0x0e18 */
 	__u8	pad_0x0e20[0x0f00-0x0e20];	/* 0x0e20 */
@@ -334,9 +330,13 @@ struct _lowcore {
 	__u8	pad_0x1338[0x1340-0x1338];	/* 0x1338 */
 	__u32	access_regs_save_area[16];	/* 0x1340 */
 	__u64	cregs_save_area[16];		/* 0x1380 */
+	__u8	pad_0x1400[0x1800-0x1400];	/* 0x1400 */
+
+	/* Transaction abort diagnostic block */
+	__u8	pgm_tdb[256];			/* 0x1800 */
 
 	/* align to the top of the prefix area */
-	__u8	pad_0x1400[0x2000-0x1400];	/* 0x1400 */
+	__u8	pad_0x1900[0x2000-0x1900];	/* 0x1900 */
 } __packed;
 
 #endif /* CONFIG_32BIT */

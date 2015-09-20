@@ -322,23 +322,11 @@ static u8 k2_stat_check_status(struct ata_port *ap)
 }
 
 #ifdef CONFIG_PPC_OF
-/*
- * k2_sata_proc_info
- * inout : decides on the direction of the dataflow and the meaning of the
- *	   variables
- * buffer: If inout==FALSE data is being written to it else read from it
- * *start: If inout==FALSE start of the valid data in the buffer
- * offset: If inout==FALSE offset from the beginning of the imaginary file
- *	   from which we start writing into the buffer
- * length: If inout==FALSE max number of bytes to be written into the buffer
- *	   else number of bytes in the buffer
- */
-static int k2_sata_proc_info(struct Scsi_Host *shost, char *page, char **start,
-			     off_t offset, int count, int inout)
+static int k2_sata_show_info(struct seq_file *m, struct Scsi_Host *shost)
 {
 	struct ata_port *ap;
 	struct device_node *np;
-	int len, index;
+	int index;
 
 	/* Find  the ata_port */
 	ap = ata_shost_to_port(shost);
@@ -356,15 +344,12 @@ static int k2_sata_proc_info(struct Scsi_Host *shost, char *page, char **start,
 		const u32 *reg = of_get_property(np, "reg", NULL);
 		if (!reg)
 			continue;
-		if (index == *reg)
+		if (index == *reg) {
+			seq_printf(m, "devspec: %s\n", np->full_name);
 			break;
+		}
 	}
-	if (np == NULL)
-		return 0;
-
-	len = sprintf(page, "devspec: %s\n", np->full_name);
-
-	return len;
+	return 0;
 }
 #endif /* CONFIG_PPC_OF */
 
@@ -372,7 +357,7 @@ static int k2_sata_proc_info(struct Scsi_Host *shost, char *page, char **start,
 static struct scsi_host_template k2_sata_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
 #ifdef CONFIG_PPC_OF
-	.proc_info		= k2_sata_proc_info,
+	.show_info		= k2_sata_show_info,
 #endif
 };
 
@@ -560,21 +545,10 @@ static struct pci_driver k2_sata_pci_driver = {
 	.remove			= ata_pci_remove_one,
 };
 
-static int __init k2_sata_init(void)
-{
-	return pci_register_driver(&k2_sata_pci_driver);
-}
-
-static void __exit k2_sata_exit(void)
-{
-	pci_unregister_driver(&k2_sata_pci_driver);
-}
+module_pci_driver(k2_sata_pci_driver);
 
 MODULE_AUTHOR("Benjamin Herrenschmidt");
 MODULE_DESCRIPTION("low-level driver for K2 SATA controller");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, k2_sata_pci_tbl);
 MODULE_VERSION(DRV_VERSION);
-
-module_init(k2_sata_init);
-module_exit(k2_sata_exit);

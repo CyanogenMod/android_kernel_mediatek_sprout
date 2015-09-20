@@ -69,9 +69,9 @@ static int vfat_revalidate_shortname(struct dentry *dentry)
 	return ret;
 }
 
-static int vfat_revalidate(struct dentry *dentry, struct nameidata *nd)
+static int vfat_revalidate(struct dentry *dentry, unsigned int flags)
 {
-	if (nd && nd->flags & LOOKUP_RCU)
+	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 
 	/* This is not negative dentry. Always valid. */
@@ -80,9 +80,9 @@ static int vfat_revalidate(struct dentry *dentry, struct nameidata *nd)
 	return vfat_revalidate_shortname(dentry);
 }
 
-static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
+static int vfat_revalidate_ci(struct dentry *dentry, unsigned int flags)
 {
-	if (nd && nd->flags & LOOKUP_RCU)
+	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 
 	/*
@@ -102,6 +102,7 @@ static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
 	 * This may be nfsd (or something), anyway, we can't see the
 	 * intent of this. So, since this can be for creation, drop it.
 	 */
+<<<<<<< HEAD
 	if (!nd) {
 		fat_printk(ANDROID_LOG_INFO, FAT_TAG, 
 			"%s() : !nd, current process is \"(PID=%d)%s\"\n", 
@@ -109,6 +110,9 @@ static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
 			current->pid,
 			current->comm
 		) ;
+=======
+	if (!flags)
+>>>>>>> v3.10.88
 		return 0;
 	}
 
@@ -117,6 +121,7 @@ static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
 	 * case sensitive name which is specified by user if this is
 	 * for creation.
 	 */
+<<<<<<< HEAD
 	if (nd->flags & (LOOKUP_CREATE | LOOKUP_RENAME_TARGET)) {
 		fat_printk(ANDROID_LOG_INFO, FAT_TAG, 
 			"%s() : nd->flags = %x, current process is \"(PID=%d)%s\"\n", 
@@ -125,6 +130,9 @@ static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
 			current->pid,
 			current->comm
 		) ;
+=======
+	if (flags & (LOOKUP_CREATE | LOOKUP_RENAME_TARGET))
+>>>>>>> v3.10.88
 		return 0;
 	}
 
@@ -694,8 +702,7 @@ shortname:
 	de->time = de->ctime = time;
 	de->date = de->cdate = de->adate = date;
 	de->ctime_cs = time_cs;
-	de->start = cpu_to_le16(cluster);
-	de->starthi = cpu_to_le16(cluster >> 16);
+	fat_set_start(de, cluster);
 	de->size = 0;
 out_free:
 	__putname(uname);
@@ -804,7 +811,7 @@ static int vfat_d_anon_disconn(struct dentry *dentry)
 }
 
 static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
-				  struct nameidata *nd)
+				  unsigned int flags)
 {
 	struct super_block *sb = dir->i_sb;
 	struct fat_slot_info sinfo;
@@ -812,7 +819,7 @@ static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 	struct dentry *alias;
 	int err;
 
-	lock_super(sb);
+	mutex_lock(&MSDOS_SB(sb)->s_lock);
 
 	err = vfat_find(dir, &dentry->d_name, &sinfo);
 	if (err) {
@@ -843,13 +850,13 @@ static struct dentry *vfat_lookup(struct inode *dir, struct dentry *dentry,
 		if (!S_ISDIR(inode->i_mode))
 			d_move(alias, dentry);
 		iput(inode);
-		unlock_super(sb);
+		mutex_unlock(&MSDOS_SB(sb)->s_lock);
 		return alias;
 	} else
 		dput(alias);
 
 out:
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	dentry = d_splice_alias(inode, dentry);
 	if (dentry)
@@ -857,12 +864,12 @@ out:
 	return dentry;
 
 error:
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 	return ERR_PTR(err);
 }
 
 static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-		       struct nameidata *nd)
+		       bool excl)
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode;
@@ -870,6 +877,7 @@ static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	struct timespec ts;
 	int err;
 
+<<<<<<< HEAD
 	fat_printk(ANDROID_LOG_INFO, FAT_TAG, "%s() dentry->d_name = %s, current process is \"(PID=%d)%s\"\n", 
 		__func__, 
 		(dentry->d_name).name,
@@ -878,6 +886,9 @@ static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	) ;
 
 	lock_super(sb);
+=======
+	mutex_lock(&MSDOS_SB(sb)->s_lock);
+>>>>>>> v3.10.88
 
 	ts = CURRENT_TIME_SEC;
 	err = vfat_add_entry(dir, &dentry->d_name, 0, 0, &ts, &sinfo);
@@ -914,7 +925,7 @@ static int vfat_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	d_instantiate(dentry, inode);
 out:
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 	return err;
 }
 
@@ -925,6 +936,7 @@ static int vfat_rmdir(struct inode *dir, struct dentry *dentry)
 	struct fat_slot_info sinfo;
 	int err;
 
+<<<<<<< HEAD
 	fat_printk(ANDROID_LOG_INFO, FAT_TAG, "%s() dentry->d_name = %s, current process is \"(PID=%d)%s\"\n", 
 		__func__, 
 		(dentry->d_name).name,
@@ -933,6 +945,9 @@ static int vfat_rmdir(struct inode *dir, struct dentry *dentry)
 	) ;
 	
 	lock_super(sb);
+=======
+	mutex_lock(&MSDOS_SB(sb)->s_lock);
+>>>>>>> v3.10.88
 
 	err = fat_dir_empty(inode);
 	if (err) {
@@ -973,7 +988,7 @@ static int vfat_rmdir(struct inode *dir, struct dentry *dentry)
 	inode->i_mtime = inode->i_atime = CURRENT_TIME_SEC;
 	fat_detach(inode);
 out:
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 
 	return err;
 }
@@ -985,6 +1000,7 @@ static int vfat_unlink(struct inode *dir, struct dentry *dentry)
 	struct fat_slot_info sinfo;
 	int err;
 
+<<<<<<< HEAD
 	fat_printk(ANDROID_LOG_INFO, FAT_TAG, "%s() dentry->d_name = %s, current process is \"(PID=%d)%s\"\n", 
 		__func__, 
 		(dentry->d_name).name,
@@ -993,6 +1009,9 @@ static int vfat_unlink(struct inode *dir, struct dentry *dentry)
 	) ;
 
 	lock_super(sb);
+=======
+	mutex_lock(&MSDOS_SB(sb)->s_lock);
+>>>>>>> v3.10.88
 
 	err = vfat_find(dir, &dentry->d_name, &sinfo);
 	if (err) {
@@ -1019,7 +1038,7 @@ static int vfat_unlink(struct inode *dir, struct dentry *dentry)
 	inode->i_mtime = inode->i_atime = CURRENT_TIME_SEC;
 	fat_detach(inode);
 out:
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 
 	return err;
 }
@@ -1032,6 +1051,7 @@ static int vfat_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	struct timespec ts;
 	int err, cluster;
 
+<<<<<<< HEAD
 	fat_printk(ANDROID_LOG_INFO, FAT_TAG, "%s() dentry->d_name = %s, current process is \"(PID=%d)%s\"\n", 
 		__func__, 
 		(dentry->d_name).name,
@@ -1040,6 +1060,9 @@ static int vfat_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	) ;
 	
 	lock_super(sb);
+=======
+	mutex_lock(&MSDOS_SB(sb)->s_lock);
+>>>>>>> v3.10.88
 
 	ts = CURRENT_TIME_SEC;
 	cluster = fat_alloc_new_dir(dir, &ts);
@@ -1089,13 +1112,13 @@ static int vfat_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	dentry->d_time = dentry->d_parent->d_inode->i_version;
 	d_instantiate(dentry, inode);
 
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 	return 0;
 
 out_free:
 	fat_free_clusters(dir, cluster);
 out:
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 	return err;
 }
 
@@ -1107,7 +1130,7 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct inode *old_inode, *new_inode;
 	struct fat_slot_info old_sinfo, sinfo;
 	struct timespec ts;
-	loff_t dotdot_i_pos, new_i_pos;
+	loff_t new_i_pos;
 	int err, is_dir, update_dotdot, corrupt = 0;
 	struct super_block *sb = old_dir->i_sb;
 
@@ -1123,7 +1146,7 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	old_sinfo.bh = sinfo.bh = dotdot_bh = NULL;
 	old_inode = old_dentry->d_inode;
 	new_inode = new_dentry->d_inode;
-	lock_super(sb);
+	mutex_lock(&MSDOS_SB(sb)->s_lock);
 	err = vfat_find(old_dir, &old_dentry->d_name, &old_sinfo);
 	if (err) {
 		fat_printk(ANDROID_LOG_INFO, FAT_TAG, "%s()  vfat_find(old_dentry=%s) failed,err = %d,current process is \"(PID=%d)%s\"\n", 
@@ -1139,8 +1162,7 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 	is_dir = S_ISDIR(old_inode->i_mode);
 	update_dotdot = (is_dir && old_dir != new_dir);
 	if (update_dotdot) {
-		if (fat_get_dotdot_entry(old_inode, &dotdot_bh, &dotdot_de,
-					 &dotdot_i_pos) < 0) {
+		if (fat_get_dotdot_entry(old_inode, &dotdot_bh, &dotdot_de)) {
 			err = -EIO;
 			fat_printk(ANDROID_LOG_INFO, FAT_TAG, "%s()  fat_get_dotdot_entry() failed,err = %d,current process is \"(PID=%d)%s\"\n", 
 				__func__, 
@@ -1202,9 +1224,7 @@ static int vfat_rename(struct inode *old_dir, struct dentry *old_dentry,
 		mark_inode_dirty(old_inode);
 
 	if (update_dotdot) {
-		int start = MSDOS_I(new_dir)->i_logstart;
-		dotdot_de->start = cpu_to_le16(start);
-		dotdot_de->starthi = cpu_to_le16(start >> 16);
+		fat_set_start(dotdot_de, MSDOS_I(new_dir)->i_logstart);
 		mark_buffer_dirty_inode(dotdot_bh, old_inode);
 		if (IS_DIRSYNC(new_dir)) {
 			err = sync_dirty_buffer(dotdot_bh);
@@ -1251,7 +1271,7 @@ out:
 	brelse(sinfo.bh);
 	brelse(dotdot_bh);
 	brelse(old_sinfo.bh);
-	unlock_super(sb);
+	mutex_unlock(&MSDOS_SB(sb)->s_lock);
 
 	return err;
 
@@ -1260,9 +1280,7 @@ error_dotdot:
 	corrupt = 1;
 
 	if (update_dotdot) {
-		int start = MSDOS_I(old_dir)->i_logstart;
-		dotdot_de->start = cpu_to_le16(start);
-		dotdot_de->starthi = cpu_to_le16(start >> 16);
+		fat_set_start(dotdot_de, MSDOS_I(old_dir)->i_logstart);
 		mark_buffer_dirty_inode(dotdot_bh, old_inode);
 		corrupt |= sync_dirty_buffer(dotdot_bh);
 	}
@@ -1336,6 +1354,7 @@ static struct file_system_type vfat_fs_type = {
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
+MODULE_ALIAS_FS("vfat");
 
 static int fat_proc_dbgprintk_write(struct file *file, const char *buffer, unsigned long count, void *data)
 {

@@ -14,6 +14,11 @@ extern bool pm_freezing;		/* PM freezing in effect */
 extern bool pm_nosig_freezing;		/* PM nosig freezing in effect */
 
 /*
+ * Timeout for stopping processes
+ */
+extern unsigned int freeze_timeout_msecs;
+
+/*
  * Check if a process has been frozen
  */
 static inline bool frozen(struct task_struct *p)
@@ -133,6 +138,7 @@ static inline void freezer_count(void)
 	try_to_freeze();
 }
 
+<<<<<<< HEAD
 /* DO NOT ADD ANY NEW CALLERS OF THIS FUNCTION */
 static inline void freezer_count_unsafe(void)
 {
@@ -141,6 +147,8 @@ static inline void freezer_count_unsafe(void)
 	try_to_freeze_unsafe();
 }
 
+=======
+>>>>>>> v3.10.88
 /**
  * freezer_should_skip - whether to skip a task when determining frozen
  *			 state is reached
@@ -165,10 +173,16 @@ static inline bool freezer_should_skip(struct task_struct *p)
 }
 
 /*
+<<<<<<< HEAD
  * These functions are intended to be used whenever you want allow a task that's
  * sleeping in TASK_UNINTERRUPTIBLE or TASK_KILLABLE state to be frozen. Note
  * that neither return any clear indication of whether a freeze event happened
  * while in this function.
+=======
+ * These macros are intended to be used whenever you want allow a sleeping
+ * task to be frozen. Note that neither return any clear indication of
+ * whether a freeze event happened while in this function.
+>>>>>>> v3.10.88
  */
 
 /* Like schedule(), but should not block the freezer. */

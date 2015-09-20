@@ -582,7 +582,7 @@ static void fc_rport_error(struct fc_rport_priv *rdata, struct fc_frame *fp)
 static void fc_rport_error_retry(struct fc_rport_priv *rdata,
 				 struct fc_frame *fp)
 {
-	unsigned long delay = FC_DEF_E_D_TOV;
+	unsigned long delay = msecs_to_jiffies(FC_DEF_E_D_TOV);
 
 	/* make sure this isn't an FC_EX_CLOSED error, never retry those */
 	if (PTR_ERR(fp) == -FC_EX_CLOSED)
@@ -1962,7 +1962,7 @@ static int fc_rport_fcp_prli(struct fc_rport_priv *rdata, u32 spp_len,
 		rdata->flags |= FC_RP_FLAGS_RETRY;
 	rdata->supported_classes = FC_COS_CLASS3;
 
-	if (!(lport->service_params & FC_RPORT_ROLE_FCP_INITIATOR))
+	if (!(lport->service_params & FCP_SPPF_INIT_FCN))
 		return 0;
 
 	spp->spp_flags |= rspp->spp_flags & FC_SPP_EST_IMG_PAIR;

@@ -278,7 +278,7 @@ static const struct lm90_params lm90_params[] = {
 	[max6696] = {
 		.flags = LM90_HAVE_EMERGENCY
 		  | LM90_HAVE_EMERGENCY_ALARM | LM90_HAVE_TEMP3,
-		.alert_alarms = 0x187c,
+		.alert_alarms = 0x1c7c,
 		.max_convrate = 6,
 		.reg_local_ext = MAX6657_REG_R_LOCAL_TEMPL,
 	},
@@ -931,7 +931,7 @@ static ssize_t set_update_interval(struct device *dev,
 		return err;
 
 	mutex_lock(&data->update_lock);
-	lm90_set_convrate(client, data, SENSORS_LIMIT(val, 0, 100000));
+	lm90_set_convrate(client, data, clamp_val(val, 0, 100000));
 	mutex_unlock(&data->update_lock);
 
 	return count;
@@ -1399,11 +1399,10 @@ static int lm90_probe(struct i2c_client *client,
 	struct lm90_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct lm90_data), GFP_KERNEL);
-	if (!data) {
-		err = -ENOMEM;
-		goto exit;
-	}
+	data = devm_kzalloc(&client->dev, sizeof(struct lm90_data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+
 	i2c_set_clientdata(client, data);
 	mutex_init(&data->update_lock);
 
@@ -1474,8 +1473,6 @@ exit_remove_files:
 	lm90_remove_files(client, data);
 exit_restore:
 	lm90_restore_conf(client, data);
-	kfree(data);
-exit:
 	return err;
 }
 
@@ -1487,7 +1484,6 @@ static int lm90_remove(struct i2c_client *client)
 	lm90_remove_files(client, data);
 	lm90_restore_conf(client, data);
 
-	kfree(data);
 	return 0;
 }
 
@@ -1504,19 +1500,22 @@ static void lm90_alert(struct i2c_client *client, unsigned int flag)
 	if ((alarms & 0x7f) == 0 && (alarms2 & 0xfe) == 0) {
 		dev_info(&client->dev, "Everything OK\n");
 	} else {
-		if (alarms & 0x61)
+		if ((alarms & 0x61) || (alarms2 & 0x80))
 			dev_warn(&client->dev,
 				 "temp%d out of range, please check!\n", 1);
-		if (alarms & 0x1a)
+		if ((alarms & 0x1a) || (alarms2 & 0x20))
 			dev_warn(&client->dev,
 				 "temp%d out of range, please check!\n", 2);
 		if (alarms & 0x04)
 			dev_warn(&client->dev,
 				 "temp%d diode open, please check!\n", 2);
 
-		if (alarms2 & 0x18)
+		if (alarms2 & 0x5a)
 			dev_warn(&client->dev,
 				 "temp%d out of range, please check!\n", 3);
+		if (alarms2 & 0x04)
+			dev_warn(&client->dev,
+				 "temp%d diode open, please check!\n", 3);
 
 		/*
 		 * Disable ALERT# output, because these chips don't implement

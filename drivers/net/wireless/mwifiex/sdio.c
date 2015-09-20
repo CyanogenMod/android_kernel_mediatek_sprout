@@ -123,6 +123,9 @@ mwifiex_sdio_remove(struct sdio_func *func)
 	if (!adapter || !adapter->priv_num)
 		return;
 
+	/* In case driver is removed when asynchronous FW load is in progress */
+	wait_for_completion(&adapter->fw_load);
+
 	if (user_rmmod) {
 		if (adapter->is_suspended)
 			mwifiex_sdio_resume(adapter->dev);
@@ -158,7 +161,10 @@ static int mwifiex_sdio_suspend(struct device *dev)
 	struct sdio_mmc_card *card;
 	struct mwifiex_adapter *adapter;
 	mmc_pm_flag_t pm_flag = 0;
+<<<<<<< HEAD
 	int i;
+=======
+>>>>>>> v3.10.88
 	int ret = 0;
 
 	if (func) {
@@ -195,9 +201,6 @@ static int mwifiex_sdio_suspend(struct device *dev)
 	/* Indicate device suspended */
 	adapter->is_suspended = true;
 
-	for (i = 0; i < adapter->priv_num; i++)
-		netif_carrier_off(adapter->priv[i]->netdev);
-
 	return ret;
 }
 
@@ -217,7 +220,6 @@ static int mwifiex_sdio_resume(struct device *dev)
 	struct sdio_mmc_card *card;
 	struct mwifiex_adapter *adapter;
 	mmc_pm_flag_t pm_flag = 0;
-	int i;
 
 	if (func) {
 		pm_flag = sdio_get_host_pm_caps(func);
@@ -240,10 +242,6 @@ static int mwifiex_sdio_resume(struct device *dev)
 
 	adapter->is_suspended = false;
 
-	for (i = 0; i < adapter->priv_num; i++)
-		if (adapter->priv[i]->media_connected)
-			netif_carrier_on(adapter->priv[i]->netdev);
-
 	/* Disable Host Sleep */
 	mwifiex_cancel_hs(mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_STA),
 			  MWIFIEX_ASYNC_CMD);
@@ -251,6 +249,8 @@ static int mwifiex_sdio_resume(struct device *dev)
 	return 0;
 }
 
+/* Device ID for SD8786 */
+#define SDIO_DEVICE_ID_MARVELL_8786   (0x9116)
 /* Device ID for SD8787 */
 #define SDIO_DEVICE_ID_MARVELL_8787   (0x9119)
 /* Device ID for SD8797 */
@@ -258,6 +258,7 @@ static int mwifiex_sdio_resume(struct device *dev)
 
 /* WLAN IDs */
 static const struct sdio_device_id mwifiex_ids[] = {
+	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8786)},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8787)},
 	{SDIO_DEVICE(SDIO_VENDOR_ID_MARVELL, SDIO_DEVICE_ID_MARVELL_8797)},
 	{},
@@ -326,7 +327,7 @@ mwifiex_write_data_sync(struct mwifiex_adapter *adapter,
 			u8 *buffer, u32 pkt_len, u32 port)
 {
 	struct sdio_mmc_card *card = adapter->card;
-	int ret = -1;
+	int ret;
 	u8 blk_mode =
 		(port & MWIFIEX_SDIO_BYTE_MODE_MASK) ? BYTE_MODE : BLOCK_MODE;
 	u32 blk_size = (blk_mode == BLOCK_MODE) ? MWIFIEX_SDIO_BLOCK_SIZE : 1;
@@ -344,8 +345,7 @@ mwifiex_write_data_sync(struct mwifiex_adapter *adapter,
 
 	sdio_claim_host(card->func);
 
-	if (!sdio_writesb(card->func, ioport, buffer, blk_cnt * blk_size))
-		ret = 0;
+	ret = sdio_writesb(card->func, ioport, buffer, blk_cnt * blk_size);
 
 	sdio_release_host(card->func);
 
@@ -359,7 +359,7 @@ static int mwifiex_read_data_sync(struct mwifiex_adapter *adapter, u8 *buffer,
 				  u32 len, u32 port, u8 claim)
 {
 	struct sdio_mmc_card *card = adapter->card;
-	int ret = -1;
+	int ret;
 	u8 blk_mode = (port & MWIFIEX_SDIO_BYTE_MODE_MASK) ? BYTE_MODE
 		       : BLOCK_MODE;
 	u32 blk_size = (blk_mode == BLOCK_MODE) ? MWIFIEX_SDIO_BLOCK_SIZE : 1;
@@ -370,8 +370,7 @@ static int mwifiex_read_data_sync(struct mwifiex_adapter *adapter, u8 *buffer,
 	if (claim)
 		sdio_claim_host(card->func);
 
-	if (!sdio_readsb(card->func, buffer, ioport, blk_cnt * blk_size))
-		ret = 0;
+	ret = sdio_readsb(card->func, buffer, ioport, blk_cnt * blk_size);
 
 	if (claim)
 		sdio_release_host(card->func);
@@ -712,11 +711,8 @@ static int mwifiex_prog_fw_w_helper(struct mwifiex_adapter *adapter,
 
 	/* Assume that the allocated buffer is 8-byte aligned */
 	fwbuf = kzalloc(MWIFIEX_UPLD_SIZE, GFP_KERNEL);
-	if (!fwbuf) {
-		dev_err(adapter->dev,
-			"unable to alloc buffer for FW. Terminating dnld\n");
+	if (!fwbuf)
 		return -ENOMEM;
-	}
 
 	/* Perform firmware data transfer */
 	do {
@@ -900,8 +896,8 @@ static void mwifiex_interrupt_status(struct mwifiex_adapter *adapter)
 /*
  * SDIO interrupt handler.
  *
- * This function reads the interrupt status from firmware and assigns
- * the main process in workqueue which will handle the interrupt.
+ * This function reads the interrupt status from firmware and handles
+ * the interrupt in current thread (ksdioirqd) right away.
  */
 static void
 mwifiex_sdio_interrupt(struct sdio_func *func)
@@ -924,7 +920,7 @@ mwifiex_sdio_interrupt(struct sdio_func *func)
 		adapter->ps_state = PS_STATE_AWAKE;
 
 	mwifiex_interrupt_status(adapter);
-	queue_work(adapter->workqueue, &adapter->main_work);
+	mwifiex_main_process(adapter);
 }
 
 /*
@@ -938,7 +934,10 @@ static int mwifiex_decode_rx_packet(struct mwifiex_adapter *adapter,
 				    struct sk_buff *skb, u32 upld_typ)
 {
 	u8 *cmd_buf;
+	__le16 *curr_ptr = (__le16 *)skb->data;
+	u16 pkt_len = le16_to_cpu(*curr_ptr);
 
+	skb_trim(skb, pkt_len);
 	skb_pull(skb, INTF_HEADER_LEN);
 
 	switch (upld_typ) {
@@ -973,10 +972,10 @@ static int mwifiex_decode_rx_packet(struct mwifiex_adapter *adapter,
 		dev_dbg(adapter->dev, "info: --- Rx: Event ---\n");
 		adapter->event_cause = *(u32 *) skb->data;
 
-		skb_pull(skb, MWIFIEX_EVENT_HEADER_LEN);
-
 		if ((skb->len > 0) && (skb->len  < MAX_EVENT_SIZE))
-			memcpy(adapter->event_body, skb->data, skb->len);
+			memcpy(adapter->event_body,
+			       skb->data + MWIFIEX_EVENT_HEADER_LEN,
+			       skb->len);
 
 		/* event cause has been saved to adapter->event_cause */
 		adapter->event_received = true;
@@ -1514,7 +1513,6 @@ static int mwifiex_alloc_sdio_mpa_buffers(struct mwifiex_adapter *adapter,
 
 	card->mpa_tx.buf = kzalloc(mpa_tx_buf_size, GFP_KERNEL);
 	if (!card->mpa_tx.buf) {
-		dev_err(adapter->dev, "could not alloc buffer for MP-A TX\n");
 		ret = -1;
 		goto error;
 	}
@@ -1523,7 +1521,6 @@ static int mwifiex_alloc_sdio_mpa_buffers(struct mwifiex_adapter *adapter,
 
 	card->mpa_rx.buf = kzalloc(mpa_rx_buf_size, GFP_KERNEL);
 	if (!card->mpa_rx.buf) {
-		dev_err(adapter->dev, "could not alloc buffer for MP-A RX\n");
 		ret = -1;
 		goto error;
 	}
@@ -1597,6 +1594,9 @@ static int mwifiex_register_dev(struct mwifiex_adapter *adapter)
 	adapter->dev = &func->dev;
 
 	switch (func->device) {
+	case SDIO_DEVICE_ID_MARVELL_8786:
+		strcpy(adapter->fw_name, SD8786_DEFAULT_FW_NAME);
+		break;
 	case SDIO_DEVICE_ID_MARVELL_8797:
 		strcpy(adapter->fw_name, SD8797_DEFAULT_FW_NAME);
 		break;
@@ -1673,10 +1673,8 @@ static int mwifiex_init_sdio(struct mwifiex_adapter *adapter)
 
 	/* Allocate buffers for SDIO MP-A */
 	card->mp_regs = kzalloc(MAX_MP_REGS, GFP_KERNEL);
-	if (!card->mp_regs) {
-		dev_err(adapter->dev, "failed to alloc mp_regs\n");
+	if (!card->mp_regs)
 		return -ENOMEM;
-	}
 
 	ret = mwifiex_alloc_sdio_mpa_buffers(adapter,
 					     SDIO_MP_TX_AGGR_DEF_BUF_SIZE,
@@ -1740,6 +1738,36 @@ mwifiex_update_mp_end_port(struct mwifiex_adapter *adapter, u16 port)
 		port, card->mp_data_port_mask);
 }
 
+static struct mmc_host *reset_host;
+static void sdio_card_reset_worker(struct work_struct *work)
+{
+	struct mmc_host *target = reset_host;
+
+	/* The actual reset operation must be run outside of driver thread.
+	 * This is because mmc_remove_host() will cause the device to be
+	 * instantly destroyed, and the driver then needs to end its thread,
+	 * leading to a deadlock.
+	 *
+	 * We run it in a totally independent workqueue.
+	 */
+
+	pr_err("Resetting card...\n");
+	mmc_remove_host(target);
+	/* 20ms delay is based on experiment with sdhci controller */
+	mdelay(20);
+	mmc_add_host(target);
+}
+static DECLARE_WORK(card_reset_work, sdio_card_reset_worker);
+
+/* This function resets the card */
+static void mwifiex_sdio_card_reset(struct mwifiex_adapter *adapter)
+{
+	struct sdio_mmc_card *card = adapter->card;
+
+	reset_host = card->func->card->host;
+	schedule_work(&card_reset_work);
+}
+
 static struct mwifiex_if_ops sdio_ops = {
 	.init_if = mwifiex_init_sdio,
 	.cleanup_if = mwifiex_cleanup_sdio,
@@ -1758,6 +1786,7 @@ static struct mwifiex_if_ops sdio_ops = {
 	.cleanup_mpa_buf = mwifiex_cleanup_mpa_buf,
 	.cmdrsp_complete = mwifiex_sdio_cmdrsp_complete,
 	.event_complete = mwifiex_sdio_event_complete,
+	.card_reset = mwifiex_sdio_card_reset,
 };
 
 /*
@@ -1795,6 +1824,7 @@ mwifiex_sdio_cleanup_module(void)
 	/* Set the flag as user is removing this module. */
 	user_rmmod = 1;
 
+	cancel_work_sync(&card_reset_work);
 	sdio_unregister_driver(&mwifiex_sdio);
 }
 
@@ -1805,5 +1835,6 @@ MODULE_AUTHOR("Marvell International Ltd.");
 MODULE_DESCRIPTION("Marvell WiFi-Ex SDIO Driver version " SDIO_VERSION);
 MODULE_VERSION(SDIO_VERSION);
 MODULE_LICENSE("GPL v2");
+MODULE_FIRMWARE(SD8786_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8787_DEFAULT_FW_NAME);
 MODULE_FIRMWARE(SD8797_DEFAULT_FW_NAME);

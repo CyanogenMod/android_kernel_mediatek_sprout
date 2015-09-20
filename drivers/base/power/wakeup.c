@@ -391,6 +391,12 @@ static void wakeup_source_activate(struct wakeup_source *ws)
 {
 	unsigned int cec;
 
+	/*
+	 * active wakeup source should bring the system
+	 * out of PM_SUSPEND_FREEZE state
+	 */
+	freeze_wake();
+
 	ws->active = true;
 	ws->active_count++;
 	ws->last_time = ktime_get();
@@ -721,11 +727,17 @@ bool pm_wakeup_pending(void)
 		events_check_enabled = !ret;
 	}
 	spin_unlock_irqrestore(&events_lock, flags);
+<<<<<<< HEAD
 	
 	if (ret) {
 			pr_warn("[%s][%s]:cnt=%d,saved_count=%d,inpr=%d\n",_TAG, __func__,cnt,saved_count,inpr);
 			print_active_wakeup_sources();
 	}
+=======
+
+	if (ret)
+		print_active_wakeup_sources();
+>>>>>>> v3.10.88
 
 	return ret;
 }

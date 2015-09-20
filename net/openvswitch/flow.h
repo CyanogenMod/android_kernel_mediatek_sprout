@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2011 Nicira Networks.
+ * Copyright (c) 2007-2011 Nicira, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of version 2 of the GNU General Public
@@ -43,7 +43,8 @@ struct sw_flow_actions {
 struct sw_flow_key {
 	struct {
 		u32	priority;	/* Packet QoS priority. */
-		u16	in_port;	/* Input switch port (or USHRT_MAX). */
+		u32	skb_mark;	/* SKB mark. */
+		u16	in_port;	/* Input switch port (or DP_MAX_PORTS). */
 	} phy;
 	struct {
 		u8     src[ETH_ALEN];	/* Ethernet source address. */
@@ -137,30 +138,13 @@ int ovs_flow_extract(struct sk_buff *, u16 in_port, struct sw_flow_key *,
 void ovs_flow_used(struct sw_flow *, struct sk_buff *);
 u64 ovs_flow_used_time(unsigned long flow_jiffies);
 
-/* Upper bound on the length of a nlattr-formatted flow key.  The longest
- * nlattr-formatted flow key would be:
- *
- *                         struct  pad  nl hdr  total
- *                         ------  ---  ------  -----
- *  OVS_KEY_ATTR_PRIORITY      4    --     4      8
- *  OVS_KEY_ATTR_IN_PORT       4    --     4      8
- *  OVS_KEY_ATTR_ETHERNET     12    --     4     16
- *  OVS_KEY_ATTR_8021Q         4    --     4      8
- *  OVS_KEY_ATTR_ETHERTYPE     2     2     4      8
- *  OVS_KEY_ATTR_IPV6         40    --     4     44
- *  OVS_KEY_ATTR_ICMPV6        2     2     4      8
- *  OVS_KEY_ATTR_ND           28    --     4     32
- *  -------------------------------------------------
- *  total                                       132
- */
-#define FLOW_BUFSIZE 132
-
 int ovs_flow_to_nlattrs(const struct sw_flow_key *, struct sk_buff *);
 int ovs_flow_from_nlattrs(struct sw_flow_key *swkey, int *key_lenp,
 		      const struct nlattr *);
-int ovs_flow_metadata_from_nlattrs(u32 *priority, u16 *in_port,
+int ovs_flow_metadata_from_nlattrs(u32 *priority, u32 *mark, u16 *in_port,
 			       const struct nlattr *);
 
+#define MAX_ACTIONS_BUFSIZE    (16 * 1024)
 #define TBL_MIN_BUCKETS		1024
 
 struct flow_table {

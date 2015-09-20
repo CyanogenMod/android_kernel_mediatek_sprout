@@ -314,7 +314,11 @@ static struct snd_soc_dai_driver nuc900_ac97_dai = {
 	.ops = &nuc900_ac97_dai_ops,
 };
 
-static int __devinit nuc900_ac97_drvprobe(struct platform_device *pdev)
+static const struct snd_soc_component_driver nuc900_ac97_component = {
+	.name		= "nuc900-ac97",
+};
+
+static int nuc900_ac97_drvprobe(struct platform_device *pdev)
 {
 	struct nuc900_audio *nuc900_audio;
 	int ret;
@@ -361,7 +365,8 @@ static int __devinit nuc900_ac97_drvprobe(struct platform_device *pdev)
 
 	nuc900_ac97_data = nuc900_audio;
 
-	ret = snd_soc_register_dai(&pdev->dev, &nuc900_ac97_dai);
+	ret = snd_soc_register_component(&pdev->dev, &nuc900_ac97_component,
+					 &nuc900_ac97_dai, 1);
 	if (ret)
 		goto out3;
 
@@ -382,9 +387,9 @@ out0:
 	return ret;
 }
 
-static int __devexit nuc900_ac97_drvremove(struct platform_device *pdev)
+static int nuc900_ac97_drvremove(struct platform_device *pdev)
 {
-	snd_soc_unregister_dai(&pdev->dev);
+	snd_soc_unregister_component(&pdev->dev);
 
 	clk_put(nuc900_ac97_data->clk);
 	iounmap(nuc900_ac97_data->mmio);
@@ -403,7 +408,7 @@ static struct platform_driver nuc900_ac97_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= nuc900_ac97_drvprobe,
-	.remove		= __devexit_p(nuc900_ac97_drvremove),
+	.remove		= nuc900_ac97_drvremove,
 };
 
 module_platform_driver(nuc900_ac97_driver);

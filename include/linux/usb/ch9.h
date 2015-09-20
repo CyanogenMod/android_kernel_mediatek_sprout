@@ -29,15 +29,12 @@
  *     someone that the two other points are non-issues for that
  *     particular descriptor type.
  */
-
 #ifndef __LINUX_USB_CH9_H
 #define __LINUX_USB_CH9_H
 
-#include <linux/types.h>	/* __u8 etc */
-#include <asm/byteorder.h>	/* le16_to_cpu */
+#include <uapi/linux/usb/ch9.h>
 
-/*-------------------------------------------------------------------------*/
-
+<<<<<<< HEAD
 /* CONTROL REQUEST SUPPORT */
 
 /*
@@ -903,6 +900,8 @@ enum usb_device_speed {
 };
 
 #ifdef __KERNEL__
+=======
+>>>>>>> v3.10.88
 
 /**
  * usb_speed_string() - Returns human readable-name of the speed.
@@ -912,41 +911,13 @@ enum usb_device_speed {
  */
 extern const char *usb_speed_string(enum usb_device_speed speed);
 
-#endif
 
-enum usb_device_state {
-	/* NOTATTACHED isn't in the USB spec, and this state acts
-	 * the same as ATTACHED ... but it's clearer this way.
-	 */
-	USB_STATE_NOTATTACHED = 0,
-
-	/* chapter 9 and authentication (wireless) device states */
-	USB_STATE_ATTACHED,
-	USB_STATE_POWERED,			/* wired */
-	USB_STATE_RECONNECTING,			/* auth */
-	USB_STATE_UNAUTHENTICATED,		/* auth */
-	USB_STATE_DEFAULT,			/* limited function */
-	USB_STATE_ADDRESS,
-	USB_STATE_CONFIGURED,			/* most functions */
-
-	USB_STATE_SUSPENDED
-
-	/* NOTE:  there are actually four different SUSPENDED
-	 * states, returning to POWERED, DEFAULT, ADDRESS, or
-	 * CONFIGURED respectively when SOF tokens flow again.
-	 * At this level there's no difference between L1 and L2
-	 * suspend states.  (L2 being original USB 1.1 suspend.)
-	 */
-};
-
-/*-------------------------------------------------------------------------*/
-
-/*
- * As per USB compliance update, a device that is actively drawing
- * more than 100mA from USB must report itself as bus-powered in
- * the GetStatus(DEVICE) call.
- * http://compliance.usb.org/index.asp?UpdateFile=Electrical&Format=Standard#34
+/**
+ * usb_state_string - Returns human readable name for the state.
+ * @state: The state to return a human-readable name for. If it's not
+ *	any of the states devices in usb_device_state_string enum,
+ *	the string UNKNOWN will be returned.
  */
-#define USB_SELF_POWER_VBUS_MAX_DRAW		100
+extern const char *usb_state_string(enum usb_device_state state);
 
 #endif /* __LINUX_USB_CH9_H */

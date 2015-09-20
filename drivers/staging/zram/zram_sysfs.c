@@ -59,6 +59,7 @@ static ssize_t disksize_store(struct device *dev,
 	struct zram_meta *meta;
 	struct zram *zram = dev_to_zram(dev);
 
+<<<<<<< HEAD
 #if 0
 	disksize = memparse(buf, NULL);
 	/*
@@ -82,6 +83,14 @@ static ssize_t disksize_store(struct device *dev,
 		printk(KERN_ALERT"Failed to allocate memory for meta!\n");
 		return len;
 	}
+=======
+	disksize = memparse(buf, NULL);
+	if (!disksize)
+		return -EINVAL;
+
+	disksize = PAGE_ALIGN(disksize);
+	meta = zram_meta_alloc(disksize);
+>>>>>>> v3.10.88
 	down_write(&zram->init_lock);
 	if (zram->init_done) {
 		up_write(&zram->init_lock);
@@ -221,8 +230,15 @@ static ssize_t mem_used_total_show(struct device *dev,
 	struct zram *zram = dev_to_zram(dev);
 	struct zram_meta *meta = zram->meta;
 
+<<<<<<< HEAD
 	if (zram->init_done)
 		val = zs_get_total_size_bytes(meta->mem_pool);
+=======
+	down_read(&zram->init_lock);
+	if (zram->init_done)
+		val = zs_get_total_size_bytes(meta->mem_pool);
+	up_read(&zram->init_lock);
+>>>>>>> v3.10.88
 
 	return sprintf(buf, "%llu\n", val);
 }

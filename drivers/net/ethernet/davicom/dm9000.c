@@ -193,35 +193,35 @@ iow(board_info_t * db, int reg, int value)
 
 static void dm9000_outblk_8bit(void __iomem *reg, void *data, int count)
 {
-	writesb(reg, data, count);
+	iowrite8_rep(reg, data, count);
 }
 
 static void dm9000_outblk_16bit(void __iomem *reg, void *data, int count)
 {
-	writesw(reg, data, (count+1) >> 1);
+	iowrite16_rep(reg, data, (count+1) >> 1);
 }
 
 static void dm9000_outblk_32bit(void __iomem *reg, void *data, int count)
 {
-	writesl(reg, data, (count+3) >> 2);
+	iowrite32_rep(reg, data, (count+3) >> 2);
 }
 
 /* input block from chip to memory */
 
 static void dm9000_inblk_8bit(void __iomem *reg, void *data, int count)
 {
-	readsb(reg, data, count);
+	ioread8_rep(reg, data, count);
 }
 
 
 static void dm9000_inblk_16bit(void __iomem *reg, void *data, int count)
 {
-	readsw(reg, data, (count+1) >> 1);
+	ioread16_rep(reg, data, (count+1) >> 1);
 }
 
 static void dm9000_inblk_32bit(void __iomem *reg, void *data, int count)
 {
-	readsl(reg, data, (count+3) >> 2);
+	ioread32_rep(reg, data, (count+3) >> 2);
 }
 
 /* dump block from chip to null */
@@ -535,9 +535,10 @@ static void dm9000_get_drvinfo(struct net_device *dev,
 {
 	board_info_t *dm = to_dm9000_board(dev);
 
-	strcpy(info->driver, CARDNAME);
-	strcpy(info->version, DRV_VERSION);
-	strcpy(info->bus_info, to_platform_device(dm->dev)->name);
+	strlcpy(info->driver, CARDNAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->bus_info, to_platform_device(dm->dev)->name,
+		sizeof(info->bus_info));
 }
 
 static u32 dm9000_get_msglevel(struct net_device *dev)
@@ -1360,7 +1361,7 @@ static const struct net_device_ops dm9000_netdev_ops = {
 /*
  * Search DM9000 board, allocate space and register it
  */
-static int __devinit
+static int
 dm9000_probe(struct platform_device *pdev)
 {
 	struct dm9000_plat_data *pdata = pdev->dev.platform_data;
@@ -1667,7 +1668,7 @@ static const struct dev_pm_ops dm9000_drv_pm_ops = {
 	.resume		= dm9000_drv_resume,
 };
 
-static int __devexit
+static int
 dm9000_drv_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
@@ -1689,25 +1690,10 @@ static struct platform_driver dm9000_driver = {
 		.pm	 = &dm9000_drv_pm_ops,
 	},
 	.probe   = dm9000_probe,
-	.remove  = __devexit_p(dm9000_drv_remove),
+	.remove  = dm9000_drv_remove,
 };
 
-static int __init
-dm9000_init(void)
-{
-	printk(KERN_INFO "%s Ethernet Driver, V%s\n", CARDNAME, DRV_VERSION);
-
-	return platform_driver_register(&dm9000_driver);
-}
-
-static void __exit
-dm9000_cleanup(void)
-{
-	platform_driver_unregister(&dm9000_driver);
-}
-
-module_init(dm9000_init);
-module_exit(dm9000_cleanup);
+module_platform_driver(dm9000_driver);
 
 MODULE_AUTHOR("Sascha Hauer, Ben Dooks");
 MODULE_DESCRIPTION("Davicom DM9000 network driver");

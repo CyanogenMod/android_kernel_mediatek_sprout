@@ -1,7 +1,7 @@
 /*
  *  libata-scsi.c - helper library for ATA
  *
- *  Maintained by:  Jeff Garzik <jgarzik@pobox.com>
+ *  Maintained by:  Tejun Heo <tj@kernel.org>
  *    		    Please ALWAYS copy linux-ide@vger.kernel.org
  *		    on emails.
  *
@@ -49,6 +49,7 @@
 #include <linux/hdreg.h>
 #include <linux/uaccess.h>
 #include <linux/suspend.h>
+#include <linux/pm_qos.h>
 #include <asm/unaligned.h>
 
 #include "libata.h"
@@ -111,12 +112,14 @@ static const char *ata_lpm_policy_names[] = {
 	[ATA_LPM_MIN_POWER]	= "min_power",
 };
 
-static ssize_t ata_scsi_lpm_store(struct device *dev,
+static ssize_t ata_scsi_lpm_store(struct device *device,
 				  struct device_attribute *attr,
 				  const char *buf, size_t count)
 {
-	struct Scsi_Host *shost = class_to_shost(dev);
+	struct Scsi_Host *shost = class_to_shost(device);
 	struct ata_port *ap = ata_shost_to_port(shost);
+	struct ata_link *link;
+	struct ata_device *dev;
 	enum ata_lpm_policy policy;
 	unsigned long flags;
 
@@ -132,10 +135,20 @@ static ssize_t ata_scsi_lpm_store(struct device *dev,
 		return -EINVAL;
 
 	spin_lock_irqsave(ap->lock, flags);
+
+	ata_for_each_link(link, ap, EDGE) {
+		ata_for_each_dev(dev, &ap->link, ENABLED) {
+			if (dev->horkage & ATA_HORKAGE_NOLPM) {
+				count = -EOPNOTSUPP;
+				goto out_unlock;
+			}
+		}
+	}
+
 	ap->target_lpm_policy = policy;
 	ata_port_schedule_eh(ap);
+out_unlock:
 	spin_unlock_irqrestore(ap->lock, flags);
-
 	return count;
 }
 
@@ -532,8 +545,8 @@ int ata_cmd_ioctl(struct scsi_device *scsidev, void __user *arg)
 			struct scsi_sense_hdr sshdr;
 			scsi_normalize_sense(sensebuf, SCSI_SENSE_BUFFERSIZE,
 					     &sshdr);
-			if (sshdr.sense_key == 0 &&
-			    sshdr.asc == 0 && sshdr.ascq == 0)
+			if (sshdr.sense_key == RECOVERED_ERROR &&
+			    sshdr.asc == 0 && sshdr.ascq == 0x1d)
 				cmd_result &= ~SAM_STAT_CHECK_CONDITION;
 		}
 
@@ -618,8 +631,8 @@ int ata_task_ioctl(struct scsi_device *scsidev, void __user *arg)
 			struct scsi_sense_hdr sshdr;
 			scsi_normalize_sense(sensebuf, SCSI_SENSE_BUFFERSIZE,
 						&sshdr);
-			if (sshdr.sense_key == 0 &&
-				sshdr.asc == 0 && sshdr.ascq == 0)
+			if (sshdr.sense_key == RECOVERED_ERROR &&
+			    sshdr.asc == 0 && sshdr.ascq == 0x1d)
 				cmd_result &= ~SAM_STAT_CHECK_CONDITION;
 		}
 
@@ -933,7 +946,11 @@ static void ata_to_sense_error(unsigned id, u8 drv_stat, u8 drv_err, u8 *sk,
  *	block specified for the ATA pass through commands.  Regardless
  *	of whether the command errored or not, return a sense
  *	block. Copy all controller registers into the sense
- *	block. Clear sense key, ASC & ASCQ if there is no error.
+ *	block. If there was no error, we get the request from an ATA
+ *	passthrough command, so we use the following sense data:
+ *	sk = RECOVERED ERROR
+ *	asc,ascq = ATA PASS-THROUGH INFORMATION AVAILABLE
+ *      
  *
  *	LOCKING:
  *	None.
@@ -959,6 +976,10 @@ static void ata_gen_passthru_sense(struct ata_queued_cmd *qc)
 		ata_to_sense_error(qc->ap->print_id, tf->command, tf->feature,
 				   &sb[1], &sb[2], &sb[3], verbose);
 		sb[1] &= 0x0f;
+	} else {
+		sb[1] = RECOVERED_ERROR;
+		sb[2] = 0;
+		sb[3] = 0x1D;
 	}
 
 	/*
@@ -1054,6 +1075,8 @@ static void ata_scsi_sdev_config(struct scsi_device *sdev)
 {
 	sdev->use_10_for_rw = 1;
 	sdev->use_10_for_ms = 1;
+	sdev->no_report_opcodes = 1;
+	sdev->no_write_same = 1;
 
 	/* Schedule policy is determined by ->qc_defer() callback and
 	 * it needs to see every deferred qc.  Set dev_blocked to 1 to
@@ -1657,7 +1680,7 @@ static unsigned int ata_scsi_rw_xlat(struct ata_queued_cmd *qc)
 		if (unlikely(scmd->cmd_len < 10))
 			goto invalid_fld;
 		scsi_10_lba_len(cdb, &block, &n_block);
-		if (unlikely(cdb[1] & (1 << 3)))
+		if (cdb[1] & (1 << 3))
 			tf_flags |= ATA_TFLAG_FUA;
 		break;
 	case READ_6:
@@ -1677,7 +1700,7 @@ static unsigned int ata_scsi_rw_xlat(struct ata_queued_cmd *qc)
 		if (unlikely(scmd->cmd_len < 16))
 			goto invalid_fld;
 		scsi_16_lba_len(cdb, &block, &n_block);
-		if (unlikely(cdb[1] & (1 << 3)))
+		if (cdb[1] & (1 << 3))
 			tf_flags |= ATA_TFLAG_FUA;
 		break;
 	default:
@@ -1731,10 +1754,12 @@ static void ata_scsi_qc_complete(struct ata_queued_cmd *qc)
 
 	/* For ATA pass thru (SAT) commands, generate a sense block if
 	 * user mandated it or if there's an error.  Note that if we
-	 * generate because the user forced us to, a check condition
-	 * is generated and the ATA register values are returned
+	 * generate because the user forced us to [CK_COND =1], a check
+	 * condition is generated and the ATA register values are returned
 	 * whether the command completed successfully or not. If there
-	 * was no error, SK, ASC and ASCQ will all be zero.
+	 * was no error, we use the following sense data:
+	 * sk = RECOVERED ERROR
+	 * asc,ascq = ATA PASS-THROUGH INFORMATION AVAILABLE
 	 */
 	if (((cdb[0] == ATA_16) || (cdb[0] == ATA_12)) &&
 	    ((cdb[2] & 0x20) || need_sense)) {
@@ -2114,7 +2139,6 @@ static unsigned int ata_scsiop_inq_89(struct ata_scsi_args *args, u8 *rbuf)
 	memcpy(&rbuf[8], "linux   ", 8);
 	memcpy(&rbuf[16], "libata          ", 16);
 	memcpy(&rbuf[32], DRV_VERSION, 4);
-	ata_id_string(args->id, &rbuf[32], ATA_ID_FW_REV, 4);
 
 	/* we don't store the ATA device signature, so we fake it */
 
@@ -2207,9 +2231,33 @@ static unsigned int ata_scsiop_noop(struct ata_scsi_args *args, u8 *rbuf)
 }
 
 /**
+ *	modecpy - Prepare response for MODE SENSE
+ *	@dest: output buffer
+ *	@src: data being copied
+ *	@n: length of mode page
+ *	@changeable: whether changeable parameters are requested
+ *
+ *	Generate a generic MODE SENSE page for either current or changeable
+ *	parameters.
+ *
+ *	LOCKING:
+ *	None.
+ */
+static void modecpy(u8 *dest, const u8 *src, int n, bool changeable)
+{
+	if (changeable) {
+		memcpy(dest, src, 2);
+		memset(dest + 2, 0, n - 2);
+	} else {
+		memcpy(dest, src, n);
+	}
+}
+
+/**
  *	ata_msense_caching - Simulate MODE SENSE caching info page
  *	@id: device IDENTIFY data
  *	@buf: output buffer
+ *	@changeable: whether changeable parameters are requested
  *
  *	Generate a caching info page, which conditionally indicates
  *	write caching to the SCSI layer, depending on device
@@ -2218,12 +2266,12 @@ static unsigned int ata_scsiop_noop(struct ata_scsi_args *args, u8 *rbuf)
  *	LOCKING:
  *	None.
  */
-static unsigned int ata_msense_caching(u16 *id, u8 *buf)
+static unsigned int ata_msense_caching(u16 *id, u8 *buf, bool changeable)
 {
-	memcpy(buf, def_cache_mpage, sizeof(def_cache_mpage));
-	if (ata_id_wcache_enabled(id))
+	modecpy(buf, def_cache_mpage, sizeof(def_cache_mpage), changeable);
+	if (changeable || ata_id_wcache_enabled(id))
 		buf[2] |= (1 << 2);	/* write cache enable */
-	if (!ata_id_rahead_enabled(id))
+	if (!changeable && !ata_id_rahead_enabled(id))
 		buf[12] |= (1 << 5);	/* disable read ahead */
 	return sizeof(def_cache_mpage);
 }
@@ -2231,30 +2279,33 @@ static unsigned int ata_msense_caching(u16 *id, u8 *buf)
 /**
  *	ata_msense_ctl_mode - Simulate MODE SENSE control mode page
  *	@buf: output buffer
+ *	@changeable: whether changeable parameters are requested
  *
  *	Generate a generic MODE SENSE control mode page.
  *
  *	LOCKING:
  *	None.
  */
-static unsigned int ata_msense_ctl_mode(u8 *buf)
+static unsigned int ata_msense_ctl_mode(u8 *buf, bool changeable)
 {
-	memcpy(buf, def_control_mpage, sizeof(def_control_mpage));
+	modecpy(buf, def_control_mpage, sizeof(def_control_mpage), changeable);
 	return sizeof(def_control_mpage);
 }
 
 /**
  *	ata_msense_rw_recovery - Simulate MODE SENSE r/w error recovery page
  *	@buf: output buffer
+ *	@changeable: whether changeable parameters are requested
  *
  *	Generate a generic MODE SENSE r/w error recovery page.
  *
  *	LOCKING:
  *	None.
  */
-static unsigned int ata_msense_rw_recovery(u8 *buf)
+static unsigned int ata_msense_rw_recovery(u8 *buf, bool changeable)
 {
-	memcpy(buf, def_rw_recovery_mpage, sizeof(def_rw_recovery_mpage));
+	modecpy(buf, def_rw_recovery_mpage, sizeof(def_rw_recovery_mpage),
+		changeable);
 	return sizeof(def_rw_recovery_mpage);
 }
 
@@ -2318,11 +2369,11 @@ static unsigned int ata_scsiop_mode_sense(struct ata_scsi_args *args, u8 *rbuf)
 	page_control = scsicmd[2] >> 6;
 	switch (page_control) {
 	case 0: /* current */
+	case 1: /* changeable */
+	case 2: /* defaults */
 		break;  /* supported */
 	case 3: /* saved */
 		goto saving_not_supp;
-	case 1: /* changeable */
-	case 2: /* defaults */
 	default:
 		goto invalid_fld;
 	}
@@ -2343,21 +2394,21 @@ static unsigned int ata_scsiop_mode_sense(struct ata_scsi_args *args, u8 *rbuf)
 
 	switch(pg) {
 	case RW_RECOVERY_MPAGE:
-		p += ata_msense_rw_recovery(p);
+		p += ata_msense_rw_recovery(p, page_control == 1);
 		break;
 
 	case CACHE_MPAGE:
-		p += ata_msense_caching(args->id, p);
+		p += ata_msense_caching(args->id, p, page_control == 1);
 		break;
 
 	case CONTROL_MPAGE:
-		p += ata_msense_ctl_mode(p);
+		p += ata_msense_ctl_mode(p, page_control == 1);
 		break;
 
 	case ALL_MPAGES:
-		p += ata_msense_rw_recovery(p);
-		p += ata_msense_caching(args->id, p);
-		p += ata_msense_ctl_mode(p);
+		p += ata_msense_rw_recovery(p, page_control == 1);
+		p += ata_msense_caching(args->id, p, page_control == 1);
+		p += ata_msense_ctl_mode(p, page_control == 1);
 		break;
 
 	default:		/* invalid page code */
@@ -2461,7 +2512,8 @@ static unsigned int ata_scsiop_read_cap(struct ata_scsi_args *args, u8 *rbuf)
 		rbuf[14] = (lowest_aligned >> 8) & 0x3f;
 		rbuf[15] = lowest_aligned;
 
-		if (ata_id_has_trim(args->id)) {
+		if (ata_id_has_trim(args->id) &&
+		    !(dev->horkage & ATA_HORKAGE_NOTRIM)) {
 			rbuf[14] |= 0x80; /* TPE */
 
 			if (ata_id_has_zero_after_trim(args->id))
@@ -3082,6 +3134,188 @@ static unsigned int ata_scsi_write_same_xlat(struct ata_queued_cmd *qc)
 }
 
 /**
+ *	ata_mselect_caching - Simulate MODE SELECT for caching info page
+ *	@qc: Storage for translated ATA taskfile
+ *	@buf: input buffer
+ *	@len: number of valid bytes in the input buffer
+ *
+ *	Prepare a taskfile to modify caching information for the device.
+ *
+ *	LOCKING:
+ *	None.
+ */
+static int ata_mselect_caching(struct ata_queued_cmd *qc,
+			       const u8 *buf, int len)
+{
+	struct ata_taskfile *tf = &qc->tf;
+	struct ata_device *dev = qc->dev;
+	char mpage[CACHE_MPAGE_LEN];
+	u8 wce;
+
+	/*
+	 * The first two bytes of def_cache_mpage are a header, so offsets
+	 * in mpage are off by 2 compared to buf.  Same for len.
+	 */
+
+	if (len != CACHE_MPAGE_LEN - 2)
+		return -EINVAL;
+
+	wce = buf[0] & (1 << 2);
+
+	/*
+	 * Check that read-only bits are not modified.
+	 */
+	ata_msense_caching(dev->id, mpage, false);
+	mpage[2] &= ~(1 << 2);
+	mpage[2] |= wce;
+	if (memcmp(mpage + 2, buf, CACHE_MPAGE_LEN - 2) != 0)
+		return -EINVAL;
+
+	tf->flags |= ATA_TFLAG_DEVICE | ATA_TFLAG_ISADDR;
+	tf->protocol = ATA_PROT_NODATA;
+	tf->nsect = 0;
+	tf->command = ATA_CMD_SET_FEATURES;
+	tf->feature = wce ? SETFEATURES_WC_ON : SETFEATURES_WC_OFF;
+	return 0;
+}
+
+/**
+ *	ata_scsiop_mode_select - Simulate MODE SELECT 6, 10 commands
+ *	@qc: Storage for translated ATA taskfile
+ *
+ *	Converts a MODE SELECT command to an ATA SET FEATURES taskfile.
+ *	Assume this is invoked for direct access devices (e.g. disks) only.
+ *	There should be no block descriptor for other device types.
+ *
+ *	LOCKING:
+ *	spin_lock_irqsave(host lock)
+ */
+static unsigned int ata_scsi_mode_select_xlat(struct ata_queued_cmd *qc)
+{
+	struct scsi_cmnd *scmd = qc->scsicmd;
+	const u8 *cdb = scmd->cmnd;
+	const u8 *p;
+	u8 pg, spg;
+	unsigned six_byte, pg_len, hdr_len, bd_len;
+	int len;
+
+	VPRINTK("ENTER\n");
+
+	six_byte = (cdb[0] == MODE_SELECT);
+	if (six_byte) {
+		if (scmd->cmd_len < 5)
+			goto invalid_fld;
+
+		len = cdb[4];
+		hdr_len = 4;
+	} else {
+		if (scmd->cmd_len < 9)
+			goto invalid_fld;
+
+		len = (cdb[7] << 8) + cdb[8];
+		hdr_len = 8;
+	}
+
+	/* We only support PF=1, SP=0.  */
+	if ((cdb[1] & 0x11) != 0x10)
+		goto invalid_fld;
+
+	/* Test early for possible overrun.  */
+	if (!scsi_sg_count(scmd) || scsi_sglist(scmd)->length < len)
+		goto invalid_param_len;
+
+	p = page_address(sg_page(scsi_sglist(scmd)));
+
+	/* Move past header and block descriptors.  */
+	if (len < hdr_len)
+		goto invalid_param_len;
+
+	if (six_byte)
+		bd_len = p[3];
+	else
+		bd_len = (p[6] << 8) + p[7];
+
+	len -= hdr_len;
+	p += hdr_len;
+	if (len < bd_len)
+		goto invalid_param_len;
+	if (bd_len != 0 && bd_len != 8)
+		goto invalid_param;
+
+	len -= bd_len;
+	p += bd_len;
+	if (len == 0)
+		goto skip;
+
+	/* Parse both possible formats for the mode page headers.  */
+	pg = p[0] & 0x3f;
+	if (p[0] & 0x40) {
+		if (len < 4)
+			goto invalid_param_len;
+
+		spg = p[1];
+		pg_len = (p[2] << 8) | p[3];
+		p += 4;
+		len -= 4;
+	} else {
+		if (len < 2)
+			goto invalid_param_len;
+
+		spg = 0;
+		pg_len = p[1];
+		p += 2;
+		len -= 2;
+	}
+
+	/*
+	 * No mode subpages supported (yet) but asking for _all_
+	 * subpages may be valid
+	 */
+	if (spg && (spg != ALL_SUB_MPAGES))
+		goto invalid_param;
+	if (pg_len > len)
+		goto invalid_param_len;
+
+	switch (pg) {
+	case CACHE_MPAGE:
+		if (ata_mselect_caching(qc, p, pg_len) < 0)
+			goto invalid_param;
+		break;
+
+	default:		/* invalid page code */
+		goto invalid_param;
+	}
+
+	/*
+	 * Only one page has changeable data, so we only support setting one
+	 * page at a time.
+	 */
+	if (len > pg_len)
+		goto invalid_param;
+
+	return 0;
+
+ invalid_fld:
+	/* "Invalid field in CDB" */
+	ata_scsi_set_sense(scmd, ILLEGAL_REQUEST, 0x24, 0x0);
+	return 1;
+
+ invalid_param:
+	/* "Invalid field in parameter list" */
+	ata_scsi_set_sense(scmd, ILLEGAL_REQUEST, 0x26, 0x0);
+	return 1;
+
+ invalid_param_len:
+	/* "Parameter list length error" */
+	ata_scsi_set_sense(scmd, ILLEGAL_REQUEST, 0x1a, 0x0);
+	return 1;
+
+ skip:
+	scmd->result = SAM_STAT_GOOD;
+	return 1;
+}
+
+/**
  *	ata_get_xlat_func - check if SCSI to ATA translation is possible
  *	@dev: ATA device
  *	@cmd: SCSI command opcode to consider
@@ -3120,6 +3354,11 @@ static inline ata_xlat_func_t ata_get_xlat_func(struct ata_device *dev, u8 cmd)
 	case ATA_12:
 	case ATA_16:
 		return ata_scsi_pass_thru;
+
+	case MODE_SELECT:
+	case MODE_SELECT_10:
+		return ata_scsi_mode_select_xlat;
+		break;
 
 	case START_STOP:
 		return ata_scsi_start_stop_xlat;
@@ -3313,11 +3552,6 @@ void ata_scsi_simulate(struct ata_device *dev, struct scsi_cmnd *cmd)
 		ata_scsi_rbuf_fill(&args, ata_scsiop_mode_sense);
 		break;
 
-	case MODE_SELECT:	/* unconditionally return */
-	case MODE_SELECT_10:	/* bad-field-in-cdb */
-		ata_scsi_invalid_field(cmd);
-		break;
-
 	case READ_CAPACITY:
 		ata_scsi_rbuf_fill(&args, ata_scsiop_read_cap);
 		break;
@@ -3393,6 +3627,7 @@ int ata_scsi_add_hosts(struct ata_host *host, struct scsi_host_template *sht)
 		shost->max_lun = 1;
 		shost->max_channel = 1;
 		shost->max_cmd_len = 16;
+		shost->no_write_same = 1;
 
 		/* Schedule policy is determined by ->qc_defer()
 		 * callback and it needs to see every deferred qc.
@@ -3447,6 +3682,9 @@ void ata_scsi_scan_host(struct ata_port *ap, int sync)
 			if (!IS_ERR(sdev)) {
 				dev->sdev = sdev;
 				scsi_device_put(sdev);
+				if (zpodd_dev_enabled(dev))
+					dev_pm_qos_expose_flags(
+							&sdev->sdev_gendev, 0);
 			} else {
 				dev->sdev = NULL;
 			}
@@ -3543,6 +3781,9 @@ static void ata_scsi_remove_dev(struct ata_device *dev)
 	mutex_lock(&ap->scsi_host->scan_mutex);
 	spin_lock_irqsave(ap->lock, flags);
 
+	if (zpodd_dev_enabled(dev))
+		zpodd_exit(dev);
+
 	/* clearing dev->sdev is protected by host lock */
 	sdev = dev->sdev;
 	dev->sdev = NULL;
@@ -3635,6 +3876,27 @@ void ata_scsi_hotplug(struct work_struct *work)
 		DPRINTK("ENTER/EXIT - unloading\n");
 		return;
 	}
+
+	/*
+	 * XXX - UGLY HACK
+	 *
+	 * The block layer suspend/resume path is fundamentally broken due
+	 * to freezable kthreads and workqueue and may deadlock if a block
+	 * device gets removed while resume is in progress.  I don't know
+	 * what the solution is short of removing freezable kthreads and
+	 * workqueues altogether.
+	 *
+	 * The following is an ugly hack to avoid kicking off device
+	 * removal while freezer is active.  This is a joke but does avoid
+	 * this particular deadlock scenario.
+	 *
+	 * https://bugzilla.kernel.org/show_bug.cgi?id=62801
+	 * http://marc.info/?l=linux-kernel&m=138695698516487
+	 */
+#ifdef CONFIG_FREEZER
+	while (pm_freezing)
+		msleep(10);
+#endif
 
 	DPRINTK("ENTER\n");
 	mutex_lock(&ap->scsi_scan_mutex);

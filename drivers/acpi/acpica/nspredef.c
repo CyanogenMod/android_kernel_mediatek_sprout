@@ -1,12 +1,11 @@
 /******************************************************************************
  *
  * Module Name: nspredef - Validation of ACPI predefined methods and objects
- *              $Revision: 1.1 $
  *
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -74,49 +73,16 @@ ACPI_MODULE_NAME("nspredef")
  ******************************************************************************/
 /* Local prototypes */
 static acpi_status
-acpi_ns_check_package(struct acpi_predefined_data *data,
-		      union acpi_operand_object **return_object_ptr);
-
-static acpi_status
-acpi_ns_check_package_list(struct acpi_predefined_data *data,
-			   const union acpi_predefined_info *package,
-			   union acpi_operand_object **elements, u32 count);
-
-static acpi_status
-acpi_ns_check_package_elements(struct acpi_predefined_data *data,
-			       union acpi_operand_object **elements,
-			       u8 type1,
-			       u32 count1,
-			       u8 type2, u32 count2, u32 start_index);
-
-static acpi_status
-acpi_ns_check_object_type(struct acpi_predefined_data *data,
-			  union acpi_operand_object **return_object_ptr,
-			  u32 expected_btypes, u32 package_index);
-
-static acpi_status
 acpi_ns_check_reference(struct acpi_predefined_data *data,
 			union acpi_operand_object *return_object);
 
-static void acpi_ns_get_expected_types(char *buffer, u32 expected_btypes);
-
-/*
- * Names for the types that can be returned by the predefined objects.
- * Used for warning messages. Must be in the same order as the ACPI_RTYPEs
- */
-static const char *acpi_rtype_names[] = {
-	"/Integer",
-	"/String",
-	"/Buffer",
-	"/Package",
-	"/Reference",
-};
+static u32 acpi_ns_get_bitmapped_type(union acpi_operand_object *return_object);
 
 /*******************************************************************************
  *
  * FUNCTION:    acpi_ns_check_predefined_names
  *
- * PARAMETERS:  Node            - Namespace node for the method/object
+ * PARAMETERS:  node            - Namespace node for the method/object
  *              user_param_count - Number of parameters actually passed
  *              return_status   - Status from the object evaluation
  *              return_object_ptr - Pointer to the object returned from the
@@ -134,7 +100,6 @@ acpi_ns_check_predefined_names(struct acpi_namespace_node *node,
 			       acpi_status return_status,
 			       union acpi_operand_object **return_object_ptr)
 {
-	union acpi_operand_object *return_object = *return_object_ptr;
 	acpi_status status = AE_OK;
 	const union acpi_predefined_info *predefined;
 	char *pathname;
@@ -142,13 +107,13 @@ acpi_ns_check_predefined_names(struct acpi_namespace_node *node,
 
 	/* Match the name for this method/object against the predefined list */
 
-	predefined = acpi_ns_check_for_predefined_name(node);
+	predefined = acpi_ut_match_predefined_method(node->name.ascii);
 
 	/* Get the full pathname to the object, for use in warning messages */
 
 	pathname = acpi_ns_get_external_pathname(node);
 	if (!pathname) {
-		return AE_OK;	/* Could not get pathname, ignore */
+		return (AE_OK);	/* Could not get pathname, ignore */
 	}
 
 	/*
@@ -170,25 +135,6 @@ acpi_ns_check_predefined_names(struct acpi_namespace_node *node,
 	 * validate the return object
 	 */
 	if ((return_status != AE_OK) && (return_status != AE_CTRL_RETURN_VALUE)) {
-		goto cleanup;
-	}
-
-	/*
-	 * If there is no return value, check if we require a return value for
-	 * this predefined name. Either one return value is expected, or none,
-	 * for both methods and other objects.
-	 *
-	 * Exit now if there is no return object. Warning if one was expected.
-	 */
-	if (!return_object) {
-		if ((predefined->info.expected_btypes) &&
-		    (!(predefined->info.expected_btypes & ACPI_RTYPE_NONE))) {
-			ACPI_WARN_PREDEFINED((AE_INFO, pathname,
-					      ACPI_WARN_ALWAYS,
-					      "Missing expected return value"));
-
-			status = AE_AML_NO_RETURN_VALUE;
-		}
 		goto cleanup;
 	}
 
@@ -275,10 +221,10 @@ cleanup:
  *
  * FUNCTION:    acpi_ns_check_parameter_count
  *
- * PARAMETERS:  Pathname        - Full pathname to the node (for error msgs)
- *              Node            - Namespace node for the method/object
+ * PARAMETERS:  pathname        - Full pathname to the node (for error msgs)
+ *              node            - Namespace node for the method/object
  *              user_param_count - Number of args passed in by the caller
- *              Predefined      - Pointer to entry in predefined name table
+ *              predefined      - Pointer to entry in predefined name table
  *
  * RETURN:      None
  *
@@ -332,8 +278,10 @@ acpi_ns_check_parameter_count(char *pathname,
 	 * Validate the user-supplied parameter count.
 	 * Allow two different legal argument counts (_SCP, etc.)
 	 */
-	required_params_current = predefined->info.param_count & 0x0F;
-	required_params_old = predefined->info.param_count >> 4;
+	required_params_current =
+	    predefined->info.argument_list & METHOD_ARG_MASK;
+	required_params_old =
+	    predefined->info.argument_list >> METHOD_ARG_BIT_WIDTH;
 
 	if (user_param_count != ACPI_UINT32_MAX) {
 		if ((user_param_count != required_params_current) &&
@@ -362,6 +310,7 @@ acpi_ns_check_parameter_count(char *pathname,
 
 /*******************************************************************************
  *
+<<<<<<< HEAD
  * FUNCTION:    acpi_ns_check_for_predefined_name
  *
  * PARAMETERS:  Node            - Namespace node for the method/object
@@ -966,9 +915,11 @@ acpi_ns_check_package_elements(struct acpi_predefined_data *data,
 
 /*******************************************************************************
  *
+=======
+>>>>>>> v3.10.88
  * FUNCTION:    acpi_ns_check_object_type
  *
- * PARAMETERS:  Data            - Pointer to validation data structure
+ * PARAMETERS:  data            - Pointer to validation data structure
  *              return_object_ptr - Pointer to the object returned from the
  *                                evaluation of a method or object
  *              expected_btypes - Bitmap of expected return type(s)
@@ -983,35 +934,19 @@ acpi_ns_check_package_elements(struct acpi_predefined_data *data,
  *
  ******************************************************************************/
 
-static acpi_status
+acpi_status
 acpi_ns_check_object_type(struct acpi_predefined_data *data,
 			  union acpi_operand_object **return_object_ptr,
 			  u32 expected_btypes, u32 package_index)
 {
 	union acpi_operand_object *return_object = *return_object_ptr;
 	acpi_status status = AE_OK;
-	u32 return_btype;
 	char type_buffer[48];	/* Room for 5 types */
-
-	/*
-	 * If we get a NULL return_object here, it is a NULL package element.
-	 * Since all extraneous NULL package elements were removed earlier by a
-	 * call to acpi_ns_remove_null_elements, this is an unexpected NULL element.
-	 * We will attempt to repair it.
-	 */
-	if (!return_object) {
-		status = acpi_ns_repair_null_element(data, expected_btypes,
-						     package_index,
-						     return_object_ptr);
-		if (ACPI_SUCCESS(status)) {
-			return (AE_OK);	/* Repair was successful */
-		}
-		goto type_error_exit;
-	}
 
 	/* A Namespace node should not get here, but make sure */
 
-	if (ACPI_GET_DESCRIPTOR_TYPE(return_object) == ACPI_DESC_TYPE_NAMED) {
+	if (return_object &&
+	    ACPI_GET_DESCRIPTOR_TYPE(return_object) == ACPI_DESC_TYPE_NAMED) {
 		ACPI_WARN_PREDEFINED((AE_INFO, data->pathname, data->node_flags,
 				      "Invalid return type - Found a Namespace node [%4.4s] type %s",
 				      return_object->node.name.ascii,
@@ -1028,59 +963,31 @@ acpi_ns_check_object_type(struct acpi_predefined_data *data,
 	 * from all of the predefined names (including elements of returned
 	 * packages)
 	 */
-	switch (return_object->common.type) {
-	case ACPI_TYPE_INTEGER:
-		return_btype = ACPI_RTYPE_INTEGER;
-		break;
+	data->return_btype = acpi_ns_get_bitmapped_type(return_object);
+	if (data->return_btype == ACPI_RTYPE_ANY) {
 
-	case ACPI_TYPE_BUFFER:
-		return_btype = ACPI_RTYPE_BUFFER;
-		break;
-
-	case ACPI_TYPE_STRING:
-		return_btype = ACPI_RTYPE_STRING;
-		break;
-
-	case ACPI_TYPE_PACKAGE:
-		return_btype = ACPI_RTYPE_PACKAGE;
-		break;
-
-	case ACPI_TYPE_LOCAL_REFERENCE:
-		return_btype = ACPI_RTYPE_REFERENCE;
-		break;
-
-	default:
 		/* Not one of the supported objects, must be incorrect */
-
 		goto type_error_exit;
 	}
 
-	/* Is the object one of the expected types? */
+	/* For reference objects, check that the reference type is correct */
 
-	if (return_btype & expected_btypes) {
-
-		/* For reference objects, check that the reference type is correct */
-
-		if (return_object->common.type == ACPI_TYPE_LOCAL_REFERENCE) {
-			status = acpi_ns_check_reference(data, return_object);
-		}
-
+	if ((data->return_btype & expected_btypes) == ACPI_RTYPE_REFERENCE) {
+		status = acpi_ns_check_reference(data, return_object);
 		return (status);
 	}
 
-	/* Type mismatch -- attempt repair of the returned object */
+	/* Attempt simple repair of the returned object if necessary */
 
-	status = acpi_ns_repair_object(data, expected_btypes,
+	status = acpi_ns_simple_repair(data, expected_btypes,
 				       package_index, return_object_ptr);
-	if (ACPI_SUCCESS(status)) {
-		return (AE_OK);	/* Repair was successful */
-	}
+	return (status);
 
       type_error_exit:
 
 	/* Create a string with all expected types for this predefined object */
 
-	acpi_ns_get_expected_types(type_buffer, expected_btypes);
+	acpi_ut_get_expected_return_types(type_buffer, expected_btypes);
 
 	if (package_index == ACPI_NOT_PACKAGE_ELEMENT) {
 		ACPI_WARN_PREDEFINED((AE_INFO, data->pathname, data->node_flags,
@@ -1102,7 +1009,7 @@ acpi_ns_check_object_type(struct acpi_predefined_data *data,
  *
  * FUNCTION:    acpi_ns_check_reference
  *
- * PARAMETERS:  Data            - Pointer to validation data structure
+ * PARAMETERS:  data            - Pointer to validation data structure
  *              return_object   - Object returned from the evaluation of a
  *                                method or object
  *
@@ -1138,36 +1045,55 @@ acpi_ns_check_reference(struct acpi_predefined_data *data,
 
 /*******************************************************************************
  *
- * FUNCTION:    acpi_ns_get_expected_types
+ * FUNCTION:    acpi_ns_get_bitmapped_type
  *
- * PARAMETERS:  Buffer          - Pointer to where the string is returned
- *              expected_btypes - Bitmap of expected return type(s)
+ * PARAMETERS:  return_object   - Object returned from method/obj evaluation
  *
- * RETURN:      Buffer is populated with type names.
+ * RETURN:      Object return type. ACPI_RTYPE_ANY indicates that the object
+ *              type is not supported. ACPI_RTYPE_NONE indicates that no
+ *              object was returned (return_object is NULL).
  *
- * DESCRIPTION: Translate the expected types bitmap into a string of ascii
- *              names of expected types, for use in warning messages.
+ * DESCRIPTION: Convert object type into a bitmapped object return type.
  *
  ******************************************************************************/
 
-static void acpi_ns_get_expected_types(char *buffer, u32 expected_btypes)
+static u32 acpi_ns_get_bitmapped_type(union acpi_operand_object *return_object)
 {
-	u32 this_rtype;
-	u32 i;
-	u32 j;
+	u32 return_btype;
 
-	j = 1;
-	buffer[0] = 0;
-	this_rtype = ACPI_RTYPE_INTEGER;
-
-	for (i = 0; i < ACPI_NUM_RTYPES; i++) {
-
-		/* If one of the expected types, concatenate the name of this type */
-
-		if (expected_btypes & this_rtype) {
-			ACPI_STRCAT(buffer, &acpi_rtype_names[i][j]);
-			j = 0;	/* Use name separator from now on */
-		}
-		this_rtype <<= 1;	/* Next Rtype */
+	if (!return_object) {
+		return (ACPI_RTYPE_NONE);
 	}
+
+	/* Map acpi_object_type to internal bitmapped type */
+
+	switch (return_object->common.type) {
+	case ACPI_TYPE_INTEGER:
+		return_btype = ACPI_RTYPE_INTEGER;
+		break;
+
+	case ACPI_TYPE_BUFFER:
+		return_btype = ACPI_RTYPE_BUFFER;
+		break;
+
+	case ACPI_TYPE_STRING:
+		return_btype = ACPI_RTYPE_STRING;
+		break;
+
+	case ACPI_TYPE_PACKAGE:
+		return_btype = ACPI_RTYPE_PACKAGE;
+		break;
+
+	case ACPI_TYPE_LOCAL_REFERENCE:
+		return_btype = ACPI_RTYPE_REFERENCE;
+		break;
+
+	default:
+		/* Not one of the supported objects, must be incorrect */
+
+		return_btype = ACPI_RTYPE_ANY;
+		break;
+	}
+
+	return (return_btype);
 }

@@ -27,6 +27,7 @@ struct attribute {
 	const char		*name;
 	umode_t			mode;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
+	bool			ignore_lockdep:1;
 	struct lock_class_key	*key;
 	struct lock_class_key	skey;
 #endif
@@ -79,6 +80,17 @@ struct attribute_group {
 }
 
 #define __ATTR_NULL { .attr = { .name = NULL } }
+
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+#define __ATTR_IGNORE_LOCKDEP(_name, _mode, _show, _store) {	\
+	.attr = {.name = __stringify(_name), .mode = _mode,	\
+			.ignore_lockdep = true },		\
+	.show		= _show,				\
+	.store		= _store,				\
+}
+#else
+#define __ATTR_IGNORE_LOCKDEP	__ATTR
+#endif
 
 #define attr_name(_attr) (_attr).attr.name
 
@@ -169,6 +181,10 @@ int sysfs_merge_group(struct kobject *kobj,
 		       const struct attribute_group *grp);
 void sysfs_unmerge_group(struct kobject *kobj,
 		       const struct attribute_group *grp);
+int sysfs_add_link_to_group(struct kobject *kobj, const char *group_name,
+			    struct kobject *target, const char *link_name);
+void sysfs_remove_link_from_group(struct kobject *kobj, const char *group_name,
+				  const char *link_name);
 
 void sysfs_notify(struct kobject *kobj, const char *dir, const char *attr);
 void sysfs_notify_dirent(struct sysfs_dirent *sd);
@@ -311,6 +327,18 @@ static inline int sysfs_merge_group(struct kobject *kobj,
 
 static inline void sysfs_unmerge_group(struct kobject *kobj,
 		       const struct attribute_group *grp)
+{
+}
+
+static inline int sysfs_add_link_to_group(struct kobject *kobj,
+		const char *group_name, struct kobject *target,
+		const char *link_name)
+{
+	return 0;
+}
+
+static inline void sysfs_remove_link_from_group(struct kobject *kobj,
+		const char *group_name, const char *link_name)
 {
 }
 

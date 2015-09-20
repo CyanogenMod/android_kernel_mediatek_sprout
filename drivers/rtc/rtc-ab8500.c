@@ -17,6 +17,7 @@
 #include <linux/mfd/abx500.h>
 #include <linux/mfd/abx500/ab8500.h>
 #include <linux/delay.h>
+#include <linux/of.h>
 
 #define AB8500_RTC_SOFF_STAT_REG	0x00
 #define AB8500_RTC_CC_CONF_REG		0x01
@@ -88,22 +89,17 @@ static int ab8500_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	if (retval < 0)
 		return retval;
 
-	/* Early AB8500 chips will not clear the rtc read request bit */
-	if (abx500_get_chip_id(dev) == 0) {
-		usleep_range(1000, 1000);
-	} else {
-		/* Wait for some cycles after enabling the rtc read in ab8500 */
-		while (time_before(jiffies, timeout)) {
-			retval = abx500_get_register_interruptible(dev,
-				AB8500_RTC, AB8500_RTC_READ_REQ_REG, &value);
-			if (retval < 0)
-				return retval;
+	/* Wait for some cycles after enabling the rtc read in ab8500 */
+	while (time_before(jiffies, timeout)) {
+		retval = abx500_get_register_interruptible(dev,
+			AB8500_RTC, AB8500_RTC_READ_REQ_REG, &value);
+		if (retval < 0)
+			return retval;
 
-			if (!(value & RTC_READ_REQUEST))
-				break;
+		if (!(value & RTC_READ_REQUEST))
+			break;
 
-			usleep_range(1000, 5000);
-		}
+		usleep_range(1000, 5000);
 	}
 
 	/* Read the Watchtime registers */
@@ -224,7 +220,8 @@ static int ab8500_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 {
 	int retval, i;
 	unsigned char buf[ARRAY_SIZE(ab8500_rtc_alarm_regs)];
-	unsigned long mins, secs = 0;
+	unsigned long mins, secs = 0, cursec = 0;
+	struct rtc_time curtm;
 
 	if (alarm->time.tm_year < (AB8500_RTC_EPOCH - 1900)) {
 		dev_dbg(dev, "year should be equal to or greater than %d\n",
@@ -234,6 +231,18 @@ static int ab8500_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alarm)
 
 	/* Get the number of seconds since 1970 */
 	rtc_tm_to_time(&alarm->time, &secs);
+
+	/*
+	 * Check whether alarm is set less than 1min.
+	 * Since our RTC doesn't support alarm resolution less than 1min,
+	 * return -EINVAL, so UIE EMUL can take it up, incase of UIE_ON
+	 */
+	ab8500_rtc_read_time(dev, &curtm); /* Read current time */
+	rtc_tm_to_time(&curtm, &cursec);
+	if ((secs - cursec) < 59) {
+		dev_dbg(dev, "Alarm less than 1 minute not supported\r\n");
+		return -EINVAL;
+	}
 
 	/*
 	 * Convert it to the number of seconds since 01-01-2000 00:00:00, since
@@ -380,7 +389,7 @@ static const struct rtc_class_ops ab8500_rtc_ops = {
 	.alarm_irq_enable	= ab8500_rtc_irq_enable,
 };
 
-static int __devinit ab8500_rtc_probe(struct platform_device *pdev)
+static int ab8500_rtc_probe(struct platform_device *pdev)
 {
 	int err;
 	struct rtc_device *rtc;
@@ -413,23 +422,28 @@ static int __devinit ab8500_rtc_probe(struct platform_device *pdev)
 
 	device_init_wakeup(&pdev->dev, true);
 
-	rtc = rtc_device_register("ab8500-rtc", &pdev->dev, &ab8500_rtc_ops,
-			THIS_MODULE);
+	rtc = devm_rtc_device_register(&pdev->dev, "ab8500-rtc",
+					&ab8500_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc)) {
 		dev_err(&pdev->dev, "Registration failed\n");
 		err = PTR_ERR(rtc);
 		return err;
 	}
 
+<<<<<<< HEAD
 	err = request_threaded_irq(irq, NULL, rtc_alarm_handler,
 		IRQF_NO_SUSPEND | IRQF_ONESHOT, "ab8500-rtc", rtc);
 	if (err < 0) {
 		rtc_device_unregister(rtc);
+=======
+	err = devm_request_threaded_irq(&pdev->dev, irq, NULL,
+			rtc_alarm_handler, IRQF_NO_SUSPEND | IRQF_ONESHOT,
+			"ab8500-rtc", rtc);
+	if (err < 0)
+>>>>>>> v3.10.88
 		return err;
-	}
 
 	platform_set_drvdata(pdev, rtc);
-
 
 	err = ab8500_sysfs_rtc_register(&pdev->dev);
 	if (err) {
@@ -440,15 +454,10 @@ static int __devinit ab8500_rtc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit ab8500_rtc_remove(struct platform_device *pdev)
+static int ab8500_rtc_remove(struct platform_device *pdev)
 {
-	struct rtc_device *rtc = platform_get_drvdata(pdev);
-	int irq = platform_get_irq_byname(pdev, "ALARM");
-
 	ab8500_sysfs_rtc_unregister(&pdev->dev);
 
-	free_irq(irq, rtc);
-	rtc_device_unregister(rtc);
 	platform_set_drvdata(pdev, NULL);
 
 	return 0;
@@ -460,7 +469,7 @@ static struct platform_driver ab8500_rtc_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe	= ab8500_rtc_probe,
-	.remove = __devexit_p(ab8500_rtc_remove),
+	.remove = ab8500_rtc_remove,
 };
 
 module_platform_driver(ab8500_rtc_driver);

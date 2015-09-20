@@ -46,40 +46,61 @@ struct vmbus_channel_message_table_entry {
  *
  * @icmsghdrp is of type &struct icmsg_hdr.
  * @negop is of type &struct icmsg_negotiate.
- * Set up and fill in default negotiate response message. This response can
- * come from both the vmbus driver and the hv_utils driver. The current api
- * will respond properly to both Windows 2008 and Windows 2008-R2 operating
- * systems.
+ * Set up and fill in default negotiate response message.
+ *
+ * The max_fw_version specifies the maximum framework version that
+ * we can support and max _srv_version specifies the maximum service
+ * version we can support. A special value MAX_SRV_VER can be
+ * specified to indicate that we can handle the maximum version
+ * exposed by the host.
  *
  * Mainly used by Hyper-V drivers.
  */
 void vmbus_prep_negotiate_resp(struct icmsg_hdr *icmsghdrp,
-			       struct icmsg_negotiate *negop, u8 *buf)
+				struct icmsg_negotiate *negop, u8 *buf,
+				int max_fw_version, int max_srv_version)
 {
-	if (icmsghdrp->icmsgtype == ICMSGTYPE_NEGOTIATE) {
-		icmsghdrp->icmsgsize = 0x10;
+	int icframe_vercnt;
+	int icmsg_vercnt;
+	int i;
 
-		negop = (struct icmsg_negotiate *)&buf[
-			sizeof(struct vmbuspipe_hdr) +
-			sizeof(struct icmsg_hdr)];
+	icmsghdrp->icmsgsize = 0x10;
 
-		if (negop->icframe_vercnt == 2 &&
-		   negop->icversion_data[1].major == 3) {
-			negop->icversion_data[0].major = 3;
-			negop->icversion_data[0].minor = 0;
-			negop->icversion_data[1].major = 3;
-			negop->icversion_data[1].minor = 0;
-		} else {
-			negop->icversion_data[0].major = 1;
-			negop->icversion_data[0].minor = 0;
-			negop->icversion_data[1].major = 1;
-			negop->icversion_data[1].minor = 0;
-		}
+	negop = (struct icmsg_negotiate *)&buf[
+		sizeof(struct vmbuspipe_hdr) +
+		sizeof(struct icmsg_hdr)];
 
-		negop->icframe_vercnt = 1;
-		negop->icmsg_vercnt = 1;
+	icframe_vercnt = negop->icframe_vercnt;
+	icmsg_vercnt = negop->icmsg_vercnt;
+
+	/*
+	 * Select the framework version number we will
+	 * support.
+	 */
+
+	for (i = 0; i < negop->icframe_vercnt; i++) {
+		if (negop->icversion_data[i].major <= max_fw_version)
+			icframe_vercnt = negop->icversion_data[i].major;
 	}
+
+	for (i = negop->icframe_vercnt;
+		 (i < negop->icframe_vercnt + negop->icmsg_vercnt); i++) {
+		if (negop->icversion_data[i].major <= max_srv_version)
+			icmsg_vercnt = negop->icversion_data[i].major;
+	}
+
+	/*
+	 * Respond with the maximum framework and service
+	 * version numbers we can support.
+	 */
+	negop->icframe_vercnt = 1;
+	negop->icmsg_vercnt = 1;
+	negop->icversion_data[0].major = icframe_vercnt;
+	negop->icversion_data[0].minor = 0;
+	negop->icversion_data[1].major = icmsg_vercnt;
+	negop->icversion_data[1].minor = 0;
 }
+
 EXPORT_SYMBOL_GPL(vmbus_prep_negotiate_resp);
 
 /*
@@ -144,8 +165,19 @@ static void vmbus_process_rescind_offer(struct work_struct *work)
 	struct vmbus_channel *channel = container_of(work,
 						     struct vmbus_channel,
 						     work);
+	unsigned long flags;
+	struct vmbus_channel_relid_released msg;
 
 	vmbus_device_unregister(channel->device_obj);
+	memset(&msg, 0, sizeof(struct vmbus_channel_relid_released));
+	msg.child_relid = channel->offermsg.child_relid;
+	msg.header.msgtype = CHANNELMSG_RELID_RELEASED;
+	vmbus_post_msg(&msg, sizeof(struct vmbus_channel_relid_released));
+
+	spin_lock_irqsave(&vmbus_connection.channel_lock, flags);
+	list_del(&channel->listentry);
+	spin_unlock_irqrestore(&vmbus_connection.channel_lock, flags);
+	free_channel(channel);
 }
 
 void vmbus_free_channels(void)
@@ -236,6 +268,70 @@ static void vmbus_process_offer(struct work_struct *work)
 	}
 }
 
+enum {
+	IDE = 0,
+	SCSI,
+	NIC,
+	MAX_PERF_CHN,
+};
+
+/*
+ * This is an array of device_ids (device types) that are performance critical.
+ * We attempt to distribute the interrupt load for these devices across
+ * all available CPUs.
+ */
+static const struct hv_vmbus_device_id hp_devs[] = {
+	/* IDE */
+	{ HV_IDE_GUID, },
+	/* Storage - SCSI */
+	{ HV_SCSI_GUID, },
+	/* Network */
+	{ HV_NIC_GUID, },
+};
+
+
+/*
+ * We use this state to statically distribute the channel interrupt load.
+ */
+static u32  next_vp;
+
+/*
+ * Starting with Win8, we can statically distribute the incoming
+ * channel interrupt load by binding a channel to VCPU. We
+ * implement here a simple round robin scheme for distributing
+ * the interrupt load.
+ * We will bind channels that are not performance critical to cpu 0 and
+ * performance critical channels (IDE, SCSI and Network) will be uniformly
+ * distributed across all available CPUs.
+ */
+static u32 get_vp_index(uuid_le *type_guid)
+{
+	u32 cur_cpu;
+	int i;
+	bool perf_chn = false;
+	u32 max_cpus = num_online_cpus();
+
+	for (i = IDE; i < MAX_PERF_CHN; i++) {
+		if (!memcmp(type_guid->b, hp_devs[i].guid,
+				 sizeof(uuid_le))) {
+			perf_chn = true;
+			break;
+		}
+	}
+	if ((vmbus_proto_version == VERSION_WS2008) ||
+	    (vmbus_proto_version == VERSION_WIN7) || (!perf_chn)) {
+		/*
+		 * Prior to win8, all channel interrupts are
+		 * delivered on cpu 0.
+		 * Also if the channel is not a performance critical
+		 * channel, bind it to cpu 0.
+		 */
+		return 0;
+	}
+	cur_cpu = (++next_vp % max_cpus);
+	return hv_context.vp_index[cur_cpu];
+}
+
 /*
  * vmbus_onoffer - Handler for channel offers from vmbus in parent partition.
  *
@@ -244,13 +340,8 @@ static void vmbus_onoffer(struct vmbus_channel_message_header *hdr)
 {
 	struct vmbus_channel_offer_channel *offer;
 	struct vmbus_channel *newchannel;
-	uuid_le *guidtype;
-	uuid_le *guidinstance;
 
 	offer = (struct vmbus_channel_offer_channel *)hdr;
-
-	guidtype = &offer->offer.if_type;
-	guidinstance = &offer->offer.if_instance;
 
 	/* Allocate the channel object and save this offer. */
 	newchannel = alloc_channel();
@@ -258,6 +349,35 @@ static void vmbus_onoffer(struct vmbus_channel_message_header *hdr)
 		pr_err("Unable to allocate channel object\n");
 		return;
 	}
+
+	/*
+	 * By default we setup state to enable batched
+	 * reading. A specific service can choose to
+	 * disable this prior to opening the channel.
+	 */
+	newchannel->batched_reading = true;
+
+	/*
+	 * Setup state for signalling the host.
+	 */
+	newchannel->sig_event = (struct hv_input_signal_event *)
+				(ALIGN((unsigned long)
+				&newchannel->sig_buf,
+				HV_HYPERCALL_PARAM_ALIGN));
+
+	newchannel->sig_event->connectionid.asu32 = 0;
+	newchannel->sig_event->connectionid.u.id = VMBUS_EVENT_CONNECTION_ID;
+	newchannel->sig_event->flag_number = 0;
+	newchannel->sig_event->rsvdz = 0;
+
+	if (vmbus_proto_version != VERSION_WS2008) {
+		newchannel->is_dedicated_interrupt =
+				(offer->is_dedicated_interrupt != 0);
+		newchannel->sig_event->connectionid.u.id =
+				offer->connection_id;
+	}
+
+	newchannel->target_vp = get_vp_index(&offer->offer.if_type);
 
 	memcpy(&newchannel->offermsg, offer,
 	       sizeof(struct vmbus_channel_offer_channel));
@@ -449,7 +569,6 @@ static void vmbus_onversion_response(
 {
 	struct vmbus_channel_msginfo *msginfo;
 	struct vmbus_channel_message_header *requestheader;
-	struct vmbus_channel_initiate_contact *initiate;
 	struct vmbus_channel_version_response *version_response;
 	unsigned long flags;
 
@@ -463,8 +582,6 @@ static void vmbus_onversion_response(
 
 		if (requestheader->msgtype ==
 		    CHANNELMSG_INITIATE_CONTACT) {
-			initiate =
-			(struct vmbus_channel_initiate_contact *)requestheader;
 			memcpy(&msginfo->response.version_response,
 			      version_response,
 			      sizeof(struct vmbus_channel_version_response));
@@ -531,15 +648,13 @@ int vmbus_request_offers(void)
 {
 	struct vmbus_channel_message_header *msg;
 	struct vmbus_channel_msginfo *msginfo;
-	int ret, t;
+	int ret;
 
 	msginfo = kmalloc(sizeof(*msginfo) +
 			  sizeof(struct vmbus_channel_message_header),
 			  GFP_KERNEL);
 	if (!msginfo)
 		return -ENOMEM;
-
-	init_completion(&msginfo->waitevent);
 
 	msg = (struct vmbus_channel_message_header *)msginfo->msg;
 
@@ -553,14 +668,6 @@ int vmbus_request_offers(void)
 
 		goto cleanup;
 	}
-
-	t = wait_for_completion_timeout(&msginfo->waitevent, 5*HZ);
-	if (t == 0) {
-		ret = -ETIMEDOUT;
-		goto cleanup;
-	}
-
-
 
 cleanup:
 	kfree(msginfo);

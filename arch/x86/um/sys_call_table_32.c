@@ -24,15 +24,6 @@
 
 #define old_mmap sys_old_mmap
 
-#define ptregs_fork sys_fork
-#define ptregs_execve sys_execve
-#define ptregs_iopl sys_iopl
-#define ptregs_vm86old sys_vm86old
-#define ptregs_clone sys_clone
-#define ptregs_vm86 sys_vm86
-#define ptregs_sigaltstack sys_sigaltstack
-#define ptregs_vfork sys_vfork
-
 #define __SYSCALL_I386(nr, sym, compat) extern asmlinkage void sym(void) ;
 #include <asm/syscalls_32.h>
 
@@ -43,7 +34,7 @@ typedef asmlinkage void (*sys_call_ptr_t)(void);
 
 extern asmlinkage void sys_ni_syscall(void);
 
-const sys_call_ptr_t sys_call_table[] __cacheline_aligned = {
+const sys_call_ptr_t sys_call_table[] ____cacheline_aligned = {
 	/*
 	 * Smells like a compiler bug -- it doesn't work
 	 * when the & below is removed.

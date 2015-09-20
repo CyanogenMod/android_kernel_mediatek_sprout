@@ -513,6 +513,7 @@ static void process_page(unsigned long data)
 	}
 }
 
+<<<<<<< HEAD
 struct mm_plug_cb {
 	struct blk_plug_cb cb;
 	struct cardinfo *card;
@@ -526,10 +527,21 @@ static void mm_unplug(struct blk_plug_cb *cb)
 	activate(mmcb->card);
 	spin_unlock_irq(&mmcb->card->lock);
 	kfree(mmcb);
+=======
+static void mm_unplug(struct blk_plug_cb *cb, bool from_schedule)
+{
+	struct cardinfo *card = cb->data;
+
+	spin_lock_irq(&card->lock);
+	activate(card);
+	spin_unlock_irq(&card->lock);
+	kfree(cb);
+>>>>>>> v3.10.88
 }
 
 static int mm_check_plugged(struct cardinfo *card)
 {
+<<<<<<< HEAD
 	struct blk_plug *plug = current->plug;
 	struct mm_plug_cb *mmcb;
 
@@ -549,6 +561,9 @@ static int mm_check_plugged(struct cardinfo *card)
 	mmcb->cb.callback = mm_unplug;
 	list_add(&mmcb->cb.list, &plug->cb_list);
 	return 1;
+=======
+	return !!blk_check_plugged(mm_unplug, card, sizeof(struct blk_plug_cb));
+>>>>>>> v3.10.88
 }
 
 static void mm_make_request(struct request_queue *q, struct bio *bio)
@@ -812,8 +827,7 @@ static const struct block_device_operations mm_fops = {
 	.revalidate_disk = mm_revalidate,
 };
 
-static int __devinit mm_pci_probe(struct pci_dev *dev,
-				const struct pci_device_id *id)
+static int mm_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int ret = -ENODEV;
 	struct cardinfo *card = &cards[num_cards];

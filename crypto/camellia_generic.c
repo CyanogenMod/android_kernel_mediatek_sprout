@@ -1072,7 +1072,6 @@ static struct crypto_alg camellia_alg = {
 	.cra_ctxsize		=	sizeof(struct camellia_ctx),
 	.cra_alignmask		=	3,
 	.cra_module		=	THIS_MODULE,
-	.cra_list		=	LIST_HEAD_INIT(camellia_alg.cra_list),
 	.cra_u			=	{
 		.cipher = {
 			.cia_min_keysize	=	CAMELLIA_MIN_KEY_SIZE,
@@ -1099,4 +1098,5 @@ module_exit(camellia_fini);
 
 MODULE_DESCRIPTION("Camellia Cipher Algorithm");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("camellia");
+MODULE_ALIAS_CRYPTO("camellia");
+MODULE_ALIAS_CRYPTO("camellia-generic");

@@ -31,13 +31,12 @@
 #include <sound/jack.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
-#include <plat/mcbsp.h>
+#include <linux/platform_data/asoc-ti-mcbsp.h>
 #include "../codecs/tpa6130a2.h"
 
 #include <asm/mach-types.h>
 
 #include "omap-mcbsp.h"
-#include "omap-pcm.h"
 
 #define RX51_TVOUT_SEL_GPIO		40
 #define RX51_JACK_DETECT_GPIO		177
@@ -248,16 +247,16 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"FM Transmitter", NULL, "LLOUT"},
 	{"FM Transmitter", NULL, "RLOUT"},
 
-	{"DMic Rate 64", NULL, "Mic Bias 2V"},
-	{"Mic Bias 2V", NULL, "DMic"},
+	{"DMic Rate 64", NULL, "Mic Bias"},
+	{"Mic Bias", NULL, "DMic"},
 };
 
 static const struct snd_soc_dapm_route audio_mapb[] = {
 	{"b LINE2R", NULL, "MONO_LOUT"},
 	{"Earphone", NULL, "b HPLOUT"},
 
-	{"LINE1L", NULL, "b Mic Bias 2.5V"},
-	{"b Mic Bias 2.5V", NULL, "HS Mic"}
+	{"LINE1L", NULL, "b Mic Bias"},
+	{"b Mic Bias", NULL, "HS Mic"}
 };
 
 static const char *spk_function[] = {"Off", "On"};

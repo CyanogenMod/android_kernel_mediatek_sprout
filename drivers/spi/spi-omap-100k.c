@@ -37,8 +37,6 @@
 
 #include <linux/spi/spi.h>
 
-#include <plat/clock.h>
-
 #define OMAP1_SPI100K_MAX_FREQ          48000000
 
 #define ICR_SPITAS      (OMAP7XX_ICR_BASE + 0x12)
@@ -483,12 +481,12 @@ static int omap1_spi100k_transfer(struct spi_device *spi, struct spi_message *m)
 	return 0;
 }
 
-static int __init omap1_spi100k_reset(struct omap1_spi100k *spi100k)
+static int omap1_spi100k_reset(struct omap1_spi100k *spi100k)
 {
 	return 0;
 }
 
-static int __devinit omap1_spi100k_probe(struct platform_device *pdev)
+static int omap1_spi100k_probe(struct platform_device *pdev)
 {
 	struct spi_master       *master;
 	struct omap1_spi100k    *spi100k;
@@ -562,7 +560,7 @@ err1:
 	return status;
 }
 
-static int __exit omap1_spi100k_remove(struct platform_device *pdev)
+static int omap1_spi100k_remove(struct platform_device *pdev)
 {
 	struct spi_master       *master;
 	struct omap1_spi100k    *spi100k;
@@ -606,7 +604,7 @@ static struct platform_driver omap1_spi100k_driver = {
 		.name		= "omap1_spi100k",
 		.owner		= THIS_MODULE,
 	},
-	.remove		= __exit_p(omap1_spi100k_remove),
+	.remove		= omap1_spi100k_remove,
 };
 
 

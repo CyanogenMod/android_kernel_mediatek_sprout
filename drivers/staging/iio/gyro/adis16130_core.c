@@ -16,8 +16,8 @@
 #include <linux/list.h>
 #include <linux/module.h>
 
-#include "../iio.h"
-#include "../sysfs.h"
+#include <linux/iio/iio.h>
+#include <linux/iio/sysfs.h>
 
 #define ADIS16130_CON         0x0
 #define ADIS16130_CON_RD      (1 << 6)
@@ -100,11 +100,13 @@ static const struct iio_chan_spec adis16130_channels[] = {
 		.type = IIO_ANGL_VEL,
 		.modified = 1,
 		.channel2 = IIO_MOD_Z,
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
 		.address = ADIS16130_RATEDATA,
 	}, {
 		.type = IIO_TEMP,
 		.indexed = 1,
 		.channel = 0,
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
 		.address = ADIS16130_TEMPDATA,
 	}
 };
@@ -114,14 +116,14 @@ static const struct iio_info adis16130_info = {
 	.driver_module = THIS_MODULE,
 };
 
-static int __devinit adis16130_probe(struct spi_device *spi)
+static int adis16130_probe(struct spi_device *spi)
 {
 	int ret;
 	struct adis16130_state *st;
 	struct iio_dev *indio_dev;
 
 	/* setup the industrialio driver allocated elements */
-	indio_dev = iio_allocate_device(sizeof(*st));
+	indio_dev = iio_device_alloc(sizeof(*st));
 	if (indio_dev == NULL) {
 		ret = -ENOMEM;
 		goto error_ret;
@@ -145,7 +147,7 @@ static int __devinit adis16130_probe(struct spi_device *spi)
 	return 0;
 
 error_free_dev:
-	iio_free_device(indio_dev);
+	iio_device_free(indio_dev);
 
 error_ret:
 	return ret;
@@ -155,7 +157,7 @@ error_ret:
 static int adis16130_remove(struct spi_device *spi)
 {
 	iio_device_unregister(spi_get_drvdata(spi));
-	iio_free_device(spi_get_drvdata(spi));
+	iio_device_free(spi_get_drvdata(spi));
 
 	return 0;
 }
@@ -166,7 +168,7 @@ static struct spi_driver adis16130_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = adis16130_probe,
-	.remove = __devexit_p(adis16130_remove),
+	.remove = adis16130_remove,
 };
 module_spi_driver(adis16130_driver);
 

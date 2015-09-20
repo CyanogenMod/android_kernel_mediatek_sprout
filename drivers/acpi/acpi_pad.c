@@ -145,7 +145,7 @@ static void exit_round_robin(unsigned int tsk_index)
 }
 
 static unsigned int idle_pct = 5; /* percentage */
-static unsigned int round_robin_time = 10; /* second */
+static unsigned int round_robin_time = 1; /* second */
 static int power_saving_thread(void *data)
 {
 	struct sched_param param = {.sched_priority = 1};
@@ -236,8 +236,8 @@ static int create_power_saving_task(void)
 
 	ps_tsks[ps_tsk_num] = kthread_run(power_saving_thread,
 		(void *)(unsigned long)ps_tsk_num,
-		"power_saving/%d", ps_tsk_num);
-	rc = IS_ERR(ps_tsks[ps_tsk_num]) ? PTR_ERR(ps_tsks[ps_tsk_num]) : 0;
+		"acpi_pad/%d", ps_tsk_num);
+	rc = PTR_RET(ps_tsks[ps_tsk_num]);
 	if (!rc)
 		ps_tsk_num++;
 	else
@@ -287,7 +287,7 @@ static ssize_t acpi_pad_rrtime_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	unsigned long num;
-	if (strict_strtoul(buf, 0, &num))
+	if (kstrtoul(buf, 0, &num))
 		return -EINVAL;
 	if (num < 1 || num >= 100)
 		return -EINVAL;
@@ -310,7 +310,7 @@ static ssize_t acpi_pad_idlepct_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	unsigned long num;
-	if (strict_strtoul(buf, 0, &num))
+	if (kstrtoul(buf, 0, &num))
 		return -EINVAL;
 	if (num < 1 || num >= 100)
 		return -EINVAL;
@@ -333,7 +333,7 @@ static ssize_t acpi_pad_idlecpus_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	unsigned long num;
-	if (strict_strtoul(buf, 0, &num))
+	if (kstrtoul(buf, 0, &num))
 		return -EINVAL;
 	mutex_lock(&isolated_cpus_lock);
 	acpi_pad_idle_cpus(num);
@@ -458,7 +458,7 @@ static void acpi_pad_notify(acpi_handle handle, u32 event,
 			dev_name(&device->dev), event, 0);
 		break;
 	default:
-		printk(KERN_WARNING "Unsupported event [0x%x]\n", event);
+		pr_warn("Unsupported event [0x%x]\n", event);
 		break;
 	}
 }
@@ -483,8 +483,7 @@ static int acpi_pad_add(struct acpi_device *device)
 	return 0;
 }
 
-static int acpi_pad_remove(struct acpi_device *device,
-	int type)
+static int acpi_pad_remove(struct acpi_device *device)
 {
 	mutex_lock(&isolated_cpus_lock);
 	acpi_pad_idle_cpus(0);

@@ -29,10 +29,6 @@
 #ifndef __IOCMD_H__
 #define __IOCMD_H__
 
-#include "ttype.h"
-
-/*---------------------  Export Definitions -------------------------*/
-
 // ioctl Command code
 #define MAGIC_CODE	                 0x3142
 #define IOCTL_CMD_TEST	            (SIOCDEVPRIVATE + 0)
@@ -122,8 +118,8 @@ typedef struct tagSCmdBSSJoin {
     u16     wBBPType;
     u8	    ssid[SSID_MAXLEN + 2];
     u32	    uChannel;
-    BOOL    bPSEnable;
-    BOOL    bShareKeyAuth;
+    bool    bPSEnable;
+    bool    bShareKeyAuth;
 
 } __packed SCmdBSSJoin, *PSCmdBSSJoin;
 
@@ -133,7 +129,7 @@ typedef struct tagSCmdBSSJoin {
 
 typedef struct tagSCmdZoneTypeSet {
 
- BOOL       bWrite;
+ bool       bWrite;
  WZONETYPE  ZoneType;
 
 } __packed SCmdZoneTypeSet, *PSCmdZoneTypeSet;
@@ -143,7 +139,11 @@ typedef struct tagSWPAResult {
 	u8 proto;
 	u8 key_mgmt;
 	u8 eap_type;
+<<<<<<< HEAD
          BOOL authenticated;
+=======
+         bool authenticated;
+>>>>>>> v3.10.88
 } __packed SWPAResult, *PSWPAResult;
 
 typedef struct tagSCmdStartAP {
@@ -153,17 +153,17 @@ typedef struct tagSCmdStartAP {
     u8	    ssid[SSID_MAXLEN + 2];
 	u32 uChannel;
 	u32 uBeaconInt;
-    BOOL    bShareKeyAuth;
+    bool    bShareKeyAuth;
     u8      byBasicRate;
 
 } __packed SCmdStartAP, *PSCmdStartAP;
 
 typedef struct tagSCmdSetWEP {
 
-    BOOL    bEnableWep;
+    bool    bEnableWep;
     u8      byKeyIndex;
     u8      abyWepKey[WEP_NKEYS][WEP_KEYMAXLEN];
-    BOOL    bWepKeyAvailable[WEP_NKEYS];
+    bool    bWepKeyAvailable[WEP_NKEYS];
     u32     auWepKeyLength[WEP_NKEYS];
 
 } __packed SCmdSetWEP, *PSCmdSetWEP;
@@ -176,18 +176,24 @@ typedef struct tagSBSSIDItem {
     u16	    wBeaconInterval;
     u16	    wCapInfo;
     u8      byNetType;
-    BOOL    bWEPOn;
+    bool    bWEPOn;
     u32     uRSSI;
 
 } __packed SBSSIDItem;
+<<<<<<< HEAD
 
+=======
+>>>>>>> v3.10.88
 
 typedef struct tagSBSSIDList {
 
 	u32		    uItem;
 	SBSSIDItem	sBSSIDList[0];
 } __packed SBSSIDList, *PSBSSIDList;
+<<<<<<< HEAD
 
+=======
+>>>>>>> v3.10.88
 
 typedef struct tagSNodeItem {
     // STA info
@@ -197,18 +203,21 @@ typedef struct tagSNodeItem {
     u16            wInActiveCount;
     u16            wEnQueueCnt;
     u16            wFlags;
-    BOOL           bPWBitOn;
+    bool           bPWBitOn;
     u8             byKeyIndex;
     u16            wWepKeyLength;
     u8            abyWepKey[WEP_KEYMAXLEN];
     // Auto rate fallback vars
-    BOOL           bIsInFallback;
+    bool           bIsInFallback;
     u32            uTxFailures;
     u32            uTxAttempts;
     u16            wFailureRatio;
 
 } __packed SNodeItem;
+<<<<<<< HEAD
 
+=======
+>>>>>>> v3.10.88
 
 typedef struct tagSNodeList {
 
@@ -216,11 +225,14 @@ typedef struct tagSNodeList {
 	SNodeItem	sNodeList[0];
 
 } __packed SNodeList, *PSNodeList;
+<<<<<<< HEAD
 
+=======
+>>>>>>> v3.10.88
 
 typedef struct tagSCmdLinkStatus {
 
-    BOOL    bLink;
+    bool    bLink;
 	u16	    wBSSType;
 	u8      byState;
     u8      abyBSSID[BSSID_LEN];
@@ -247,8 +259,11 @@ typedef struct tagSDot11MIBCount {
     u32 MulticastReceivedFrameCount;
     u32 FCSErrorCount;
 } __packed SDot11MIBCount, *PSDot11MIBCount;
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> v3.10.88
 
 //
 // statistic counter
@@ -431,6 +446,7 @@ struct viawget_hostapd_param {
 		} scan_req;
 	} u;
 } __packed;
+<<<<<<< HEAD
 
 /*---------------------  Export Classes  ----------------------------*/
 
@@ -439,5 +455,7 @@ struct viawget_hostapd_param {
 /*---------------------  Export Types  ------------------------------*/
 
 /*---------------------  Export Functions  --------------------------*/
+=======
+>>>>>>> v3.10.88
 
 #endif /* __IOCMD_H__ */

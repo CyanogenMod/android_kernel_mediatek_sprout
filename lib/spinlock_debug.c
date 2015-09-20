@@ -60,8 +60,13 @@ static void spin_dump(raw_spinlock_t *lock, const char *msg)
 	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d\n",
 		msg, raw_smp_processor_id(),
 		current->comm, task_pid_nr(current));
+<<<<<<< HEAD
 	printk(KERN_EMERG " lock: %p, .magic: %08x, .owner: %s/%d, "
 			".owner_cpu: %d, value: %d\n",
+=======
+	printk(KERN_EMERG " lock: %pS, .magic: %08x, .owner: %s/%d, "
+			".owner_cpu: %d\n",
+>>>>>>> v3.10.88
 		lock, lock->magic,
 		owner ? owner->comm : "<none>",
 		owner ? task_pid_nr(owner) : -1,
@@ -117,6 +122,7 @@ static inline void debug_spin_unlock(raw_spinlock_t *lock)
 static void __spin_lock_debug(raw_spinlock_t *lock)
 {
 	u64 i;
+<<<<<<< HEAD
 	u64 loops = loops_per_jiffy * LOOP_HZ;
 	int print_once = 1;
     char aee_str[40];
@@ -133,14 +139,38 @@ static void __spin_lock_debug(raw_spinlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			spin_dump(lock, "lockup");
+=======
+	u64 loops = loops_per_jiffy * HZ;
+
+	for (i = 0; i < loops; i++) {
+		if (arch_spin_trylock(&lock->raw_lock))
+			return;
+		__delay(1);
+	}
+	/* lockup suspected: */
+	spin_dump(lock, "lockup suspected");
+>>>>>>> v3.10.88
 #ifdef CONFIG_SMP
-			trigger_all_cpu_backtrace();
+	trigger_all_cpu_backtrace();
 #endif
+<<<<<<< HEAD
             debug_show_all_locks();
             sprintf( aee_str, "Spinlock lockup:%s\n", current->comm);
             aee_kernel_exception( aee_str,"spinlock debugger\n");
 		}
 	}
+=======
+
+	/*
+	 * The trylock above was causing a livelock.  Give the lower level arch
+	 * specific lock code a chance to acquire the lock. We have already
+	 * printed a warning/backtrace at this point. The non-debug arch
+	 * specific code might actually succeed in acquiring the lock.  If it is
+	 * not successful, the end-result is the same - there is no forward
+	 * progress.
+	 */
+	arch_spin_lock(&lock->raw_lock);
+>>>>>>> v3.10.88
 }
 
 void do_raw_spin_lock(raw_spinlock_t *lock)

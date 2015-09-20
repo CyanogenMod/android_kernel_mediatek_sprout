@@ -46,12 +46,20 @@ static cputime64_t get_iowait_time(int cpu)
 
 static u64 get_idle_time(int cpu)
 {
+<<<<<<< HEAD
     #ifdef CONFIG_MTK_IDLE_TIME_FIX
 	u64 idle, idle_time = get_cpu_idle_time_us_wo_cpuoffline(cpu, NULL);
     #else
     u64 idle, idle_time = get_cpu_idle_time_us(cpu, NULL);
     #endif
 	
+=======
+	u64 idle, idle_time = -1ULL;
+
+	if (cpu_online(cpu))
+		idle_time = get_cpu_idle_time_us(cpu, NULL);
+
+>>>>>>> v3.10.88
 	if (idle_time == -1ULL)
 		/* !NO_HZ or cpu offline so we can rely on cpustat.idle */
 		idle = kcpustat_cpu(cpu).cpustat[CPUTIME_IDLE];
@@ -64,12 +72,19 @@ static u64 get_idle_time(int cpu)
 static u64 get_iowait_time(int cpu)
 {
 	u64 iowait, iowait_time = -1ULL;
+<<<<<<< HEAD
     #ifdef CONFIG_MTK_IDLE_TIME_FIX
 	iowait_time = get_cpu_iowait_time_us_wo_cpuoffline(cpu, NULL);
     #else
 	iowait_time = get_cpu_iowait_time_us(cpu, NULL);
 	#endif
 	
+=======
+
+	if (cpu_online(cpu))
+		iowait_time = get_cpu_iowait_time_us(cpu, NULL);
+
+>>>>>>> v3.10.88
 	if (iowait_time == -1ULL)
 		/* !NO_HZ or cpu offline so we can rely on cpustat.iowait */
 		iowait = kcpustat_cpu(cpu).cpustat[CPUTIME_IOWAIT];
@@ -188,7 +203,7 @@ static int show_stat(struct seq_file *p, void *v)
 
 static int stat_open(struct inode *inode, struct file *file)
 {
-	unsigned size = 1024 + 128 * num_possible_cpus();
+	size_t size = 1024 + 128 * num_possible_cpus();
 	char *buf;
 	struct seq_file *m;
 	int res;

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2013, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,8 +53,8 @@ ACPI_MODULE_NAME("utaddress")
  * FUNCTION:    acpi_ut_add_address_range
  *
  * PARAMETERS:  space_id            - Address space ID
- *              Address             - op_region start address
- *              Length              - op_region length
+ *              address             - op_region start address
+ *              length              - op_region length
  *              region_node         - op_region namespace node
  *
  * RETURN:      Status
@@ -107,10 +107,10 @@ acpi_ut_add_address_range(acpi_adr_space_type space_id,
 	acpi_gbl_address_range_list[space_id] = range_info;
 
 	ACPI_DEBUG_PRINT((ACPI_DB_NAMES,
-			  "\nAdded [%4.4s] address range: 0x%p-0x%p\n",
+			  "\nAdded [%4.4s] address range: 0x%8.8X%8.8X-0x%8.8X%8.8X\n",
 			  acpi_ut_get_node_name(range_info->region_node),
-			  ACPI_CAST_PTR(void, address),
-			  ACPI_CAST_PTR(void, range_info->end_address)));
+			  ACPI_FORMAT_UINT64(address),
+			  ACPI_FORMAT_UINT64(range_info->end_address)));
 
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 	return_ACPI_STATUS(AE_OK);
@@ -160,15 +160,13 @@ acpi_ut_remove_address_range(acpi_adr_space_type space_id,
 			}
 
 			ACPI_DEBUG_PRINT((ACPI_DB_NAMES,
-					  "\nRemoved [%4.4s] address range: 0x%p-0x%p\n",
+					  "\nRemoved [%4.4s] address range: 0x%8.8X%8.8X-0x%8.8X%8.8X\n",
 					  acpi_ut_get_node_name(range_info->
 								region_node),
-					  ACPI_CAST_PTR(void,
-							range_info->
-							start_address),
-					  ACPI_CAST_PTR(void,
-							range_info->
-							end_address)));
+					  ACPI_FORMAT_UINT64(range_info->
+							     start_address),
+					  ACPI_FORMAT_UINT64(range_info->
+							     end_address)));
 
 			ACPI_FREE(range_info);
 			return_VOID;
@@ -186,9 +184,9 @@ acpi_ut_remove_address_range(acpi_adr_space_type space_id,
  * FUNCTION:    acpi_ut_check_address_range
  *
  * PARAMETERS:  space_id            - Address space ID
- *              Address             - Start address
- *              Length              - Length of address range
- *              Warn                - TRUE if warning on overlap desired
+ *              address             - Start address
+ *              length              - Length of address range
+ *              warn                - TRUE if warning on overlap desired
  *
  * RETURN:      Count of the number of conflicts detected. Zero is always
  *              returned for Space IDs other than Memory or I/O.
@@ -244,9 +242,9 @@ acpi_ut_check_address_range(acpi_adr_space_type space_id,
 								  region_node);
 
 				ACPI_WARNING((AE_INFO,
-					      "0x%p-0x%p %s conflicts with Region %s %d",
-					      ACPI_CAST_PTR(void, address),
-					      ACPI_CAST_PTR(void, end_address),
+					      "0x%8.8X%8.8X-0x%8.8X%8.8X %s conflicts with Region %s %d",
+					      ACPI_FORMAT_UINT64(address),
+					      ACPI_FORMAT_UINT64(end_address),
 					      acpi_ut_get_region_name(space_id),
 					      pathname, overlap_count));
 				ACPI_FREE(pathname);

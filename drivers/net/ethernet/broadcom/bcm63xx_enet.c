@@ -799,7 +799,7 @@ static int bcm_enet_open(struct net_device *dev)
 		snprintf(phy_id, sizeof(phy_id), PHY_ID_FMT,
 			 priv->mii_bus->id, priv->phy_id);
 
-		phydev = phy_connect(dev, phy_id, bcm_enet_adjust_phy_link, 0,
+		phydev = phy_connect(dev, phy_id, bcm_enet_adjust_phy_link,
 				     PHY_INTERFACE_MODE_MII);
 
 		if (IS_ERR(phydev)) {
@@ -862,34 +862,31 @@ static int bcm_enet_open(struct net_device *dev)
 
 	/* allocate rx dma ring */
 	size = priv->rx_ring_size * sizeof(struct bcm_enet_desc);
-	p = dma_alloc_coherent(kdev, size, &priv->rx_desc_dma, GFP_KERNEL);
+	p = dma_alloc_coherent(kdev, size, &priv->rx_desc_dma,
+			       GFP_KERNEL | __GFP_ZERO);
 	if (!p) {
-		dev_err(kdev, "cannot allocate rx ring %u\n", size);
 		ret = -ENOMEM;
 		goto out_freeirq_tx;
 	}
 
-	memset(p, 0, size);
 	priv->rx_desc_alloc_size = size;
 	priv->rx_desc_cpu = p;
 
 	/* allocate tx dma ring */
 	size = priv->tx_ring_size * sizeof(struct bcm_enet_desc);
-	p = dma_alloc_coherent(kdev, size, &priv->tx_desc_dma, GFP_KERNEL);
+	p = dma_alloc_coherent(kdev, size, &priv->tx_desc_dma,
+			       GFP_KERNEL | __GFP_ZERO);
 	if (!p) {
-		dev_err(kdev, "cannot allocate tx ring\n");
 		ret = -ENOMEM;
 		goto out_free_rx_ring;
 	}
 
-	memset(p, 0, size);
 	priv->tx_desc_alloc_size = size;
 	priv->tx_desc_cpu = p;
 
-	priv->tx_skb = kzalloc(sizeof(struct sk_buff *) * priv->tx_ring_size,
+	priv->tx_skb = kcalloc(priv->tx_ring_size, sizeof(struct sk_buff *),
 			       GFP_KERNEL);
 	if (!priv->tx_skb) {
-		dev_err(kdev, "cannot allocate rx skb queue\n");
 		ret = -ENOMEM;
 		goto out_free_tx_ring;
 	}
@@ -900,10 +897,9 @@ static int bcm_enet_open(struct net_device *dev)
 	spin_lock_init(&priv->tx_lock);
 
 	/* init & fill rx ring with skbs */
-	priv->rx_skb = kzalloc(sizeof(struct sk_buff *) * priv->rx_ring_size,
+	priv->rx_skb = kcalloc(priv->rx_ring_size, sizeof(struct sk_buff *),
 			       GFP_KERNEL);
 	if (!priv->rx_skb) {
-		dev_err(kdev, "cannot allocate rx skb queue\n");
 		ret = -ENOMEM;
 		goto out_free_tx_skb;
 	}
@@ -1227,10 +1223,11 @@ static const u32 unused_mib_regs[] = {
 static void bcm_enet_get_drvinfo(struct net_device *netdev,
 				 struct ethtool_drvinfo *drvinfo)
 {
-	strncpy(drvinfo->driver, bcm_enet_driver_name, 32);
-	strncpy(drvinfo->version, bcm_enet_driver_version, 32);
-	strncpy(drvinfo->fw_version, "N/A", 32);
-	strncpy(drvinfo->bus_info, "bcm63xx", 32);
+	strlcpy(drvinfo->driver, bcm_enet_driver_name, sizeof(drvinfo->driver));
+	strlcpy(drvinfo->version, bcm_enet_driver_version,
+		sizeof(drvinfo->version));
+	strlcpy(drvinfo->fw_version, "N/A", sizeof(drvinfo->fw_version));
+	strlcpy(drvinfo->bus_info, "bcm63xx", sizeof(drvinfo->bus_info));
 	drvinfo->n_stats = BCM_ENET_STATS_LEN;
 }
 
@@ -1612,7 +1609,7 @@ static const struct net_device_ops bcm_enet_ops = {
 /*
  * allocate netdevice, request register memory and register device.
  */
-static int __devinit bcm_enet_probe(struct platform_device *pdev)
+static int bcm_enet_probe(struct platform_device *pdev)
 {
 	struct bcm_enet_priv *priv;
 	struct net_device *dev;
@@ -1620,7 +1617,6 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 	struct resource *res_mem, *res_irq, *res_irq_rx, *res_irq_tx;
 	struct mii_bus *bus;
 	const char *clk_name;
-	unsigned int iomem_size;
 	int i, ret;
 
 	/* stop if shared driver failed, assume driver->probe will be
@@ -1645,17 +1641,12 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 	if (ret)
 		goto out;
 
-	iomem_size = resource_size(res_mem);
-	if (!request_mem_region(res_mem->start, iomem_size, "bcm63xx_enet")) {
-		ret = -EBUSY;
+	priv->base = devm_request_and_ioremap(&pdev->dev, res_mem);
+	if (priv->base == NULL) {
+		ret = -ENOMEM;
 		goto out;
 	}
 
-	priv->base = ioremap(res_mem->start, iomem_size);
-	if (priv->base == NULL) {
-		ret = -ENOMEM;
-		goto out_release_mem;
-	}
 	dev->irq = priv->irq = res_irq->start;
 	priv->irq_rx = res_irq_rx->start;
 	priv->irq_tx = res_irq_tx->start;
@@ -1675,9 +1666,9 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 	priv->mac_clk = clk_get(&pdev->dev, clk_name);
 	if (IS_ERR(priv->mac_clk)) {
 		ret = PTR_ERR(priv->mac_clk);
-		goto out_unmap;
+		goto out;
 	}
-	clk_enable(priv->mac_clk);
+	clk_prepare_enable(priv->mac_clk);
 
 	/* initialize default and fetch platform data */
 	priv->rx_ring_size = BCMENET_DEF_RX_DESC;
@@ -1706,7 +1697,7 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 			priv->phy_clk = NULL;
 			goto out_put_clk_mac;
 		}
-		clk_enable(priv->phy_clk);
+		clk_prepare_enable(priv->phy_clk);
 	}
 
 	/* do minimal hardware init to be able to probe mii bus */
@@ -1734,7 +1725,8 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 		 * if a slave is not present on hw */
 		bus->phy_mask = ~(1 << priv->phy_id);
 
-		bus->irq = kmalloc(sizeof(int) * PHY_MAX_ADDR, GFP_KERNEL);
+		bus->irq = devm_kzalloc(&pdev->dev, sizeof(int) * PHY_MAX_ADDR,
+					GFP_KERNEL);
 		if (!bus->irq) {
 			ret = -ENOMEM;
 			goto out_free_mdio;
@@ -1795,10 +1787,8 @@ static int __devinit bcm_enet_probe(struct platform_device *pdev)
 	return 0;
 
 out_unregister_mdio:
-	if (priv->mii_bus) {
+	if (priv->mii_bus)
 		mdiobus_unregister(priv->mii_bus);
-		kfree(priv->mii_bus->irq);
-	}
 
 out_free_mdio:
 	if (priv->mii_bus)
@@ -1808,19 +1798,13 @@ out_uninit_hw:
 	/* turn off mdc clock */
 	enet_writel(priv, 0, ENET_MIISC_REG);
 	if (priv->phy_clk) {
-		clk_disable(priv->phy_clk);
+		clk_disable_unprepare(priv->phy_clk);
 		clk_put(priv->phy_clk);
 	}
 
 out_put_clk_mac:
-	clk_disable(priv->mac_clk);
+	clk_disable_unprepare(priv->mac_clk);
 	clk_put(priv->mac_clk);
-
-out_unmap:
-	iounmap(priv->base);
-
-out_release_mem:
-	release_mem_region(res_mem->start, iomem_size);
 out:
 	free_netdev(dev);
 	return ret;
@@ -1830,11 +1814,10 @@ out:
 /*
  * exit func, stops hardware and unregisters netdevice
  */
-static int __devexit bcm_enet_remove(struct platform_device *pdev)
+static int bcm_enet_remove(struct platform_device *pdev)
 {
 	struct bcm_enet_priv *priv;
 	struct net_device *dev;
-	struct resource *res;
 
 	/* stop netdevice */
 	dev = platform_get_drvdata(pdev);
@@ -1846,7 +1829,6 @@ static int __devexit bcm_enet_remove(struct platform_device *pdev)
 
 	if (priv->has_phy) {
 		mdiobus_unregister(priv->mii_bus);
-		kfree(priv->mii_bus->irq);
 		mdiobus_free(priv->mii_bus);
 	} else {
 		struct bcm63xx_enet_platform_data *pd;
@@ -1857,17 +1839,12 @@ static int __devexit bcm_enet_remove(struct platform_device *pdev)
 				       bcm_enet_mdio_write_mii);
 	}
 
-	/* release device resources */
-	iounmap(priv->base);
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(res->start, resource_size(res));
-
 	/* disable hw block clocks */
 	if (priv->phy_clk) {
-		clk_disable(priv->phy_clk);
+		clk_disable_unprepare(priv->phy_clk);
 		clk_put(priv->phy_clk);
 	}
-	clk_disable(priv->mac_clk);
+	clk_disable_unprepare(priv->mac_clk);
 	clk_put(priv->mac_clk);
 
 	platform_set_drvdata(pdev, NULL);
@@ -1877,7 +1854,7 @@ static int __devexit bcm_enet_remove(struct platform_device *pdev)
 
 struct platform_driver bcm63xx_enet_driver = {
 	.probe	= bcm_enet_probe,
-	.remove	= __devexit_p(bcm_enet_remove),
+	.remove	= bcm_enet_remove,
 	.driver	= {
 		.name	= "bcm63xx_enet",
 		.owner  = THIS_MODULE,
@@ -1887,34 +1864,23 @@ struct platform_driver bcm63xx_enet_driver = {
 /*
  * reserve & remap memory space shared between all macs
  */
-static int __devinit bcm_enet_shared_probe(struct platform_device *pdev)
+static int bcm_enet_shared_probe(struct platform_device *pdev)
 {
 	struct resource *res;
-	unsigned int iomem_size;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
 		return -ENODEV;
 
-	iomem_size = resource_size(res);
-	if (!request_mem_region(res->start, iomem_size, "bcm63xx_enet_dma"))
-		return -EBUSY;
-
-	bcm_enet_shared_base = ioremap(res->start, iomem_size);
-	if (!bcm_enet_shared_base) {
-		release_mem_region(res->start, iomem_size);
+	bcm_enet_shared_base = devm_request_and_ioremap(&pdev->dev, res);
+	if (!bcm_enet_shared_base)
 		return -ENOMEM;
-	}
+
 	return 0;
 }
 
-static int __devexit bcm_enet_shared_remove(struct platform_device *pdev)
+static int bcm_enet_shared_remove(struct platform_device *pdev)
 {
-	struct resource *res;
-
-	iounmap(bcm_enet_shared_base);
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(res->start, resource_size(res));
 	return 0;
 }
 
@@ -1924,7 +1890,7 @@ static int __devexit bcm_enet_shared_remove(struct platform_device *pdev)
  */
 struct platform_driver bcm63xx_enet_shared_driver = {
 	.probe	= bcm_enet_shared_probe,
-	.remove	= __devexit_p(bcm_enet_shared_remove),
+	.remove	= bcm_enet_shared_remove,
 	.driver	= {
 		.name	= "bcm63xx_enet_shared",
 		.owner  = THIS_MODULE,

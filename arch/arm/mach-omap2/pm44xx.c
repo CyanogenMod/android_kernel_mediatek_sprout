@@ -18,6 +18,7 @@
 #include <linux/slab.h>
 #include <asm/system_misc.h>
 
+#include "soc.h"
 #include "common.h"
 #include "clockdomain.h"
 #include "powerdomain.h"
@@ -69,18 +70,27 @@ static int omap4_pm_suspend(void)
 	list_for_each_entry(pwrst, &pwrst_list, node) {
 		state = pwrdm_read_prev_pwrst(pwrst->pwrdm);
 		if (state > pwrst->next_state) {
-			pr_info("Powerdomain (%s) didn't enter "
-			       "target state %d\n",
-			       pwrst->pwrdm->name, pwrst->next_state);
+			pr_info("Powerdomain (%s) didn't enter target state %d\n",
+				pwrst->pwrdm->name, pwrst->next_state);
 			ret = -1;
 		}
 		omap_set_pwrdm_state(pwrst->pwrdm, pwrst->saved_state);
 		pwrdm_set_logic_retst(pwrst->pwrdm, pwrst->saved_logic_state);
 	}
-	if (ret)
+	if (ret) {
 		pr_crit("Could not enter target state in pm_suspend\n");
-	else
+		/*
+		 * OMAP4 chip PM currently works only with certain (newer)
+		 * versions of bootloaders. This is due to missing code in the
+		 * kernel to properly reset and initialize some devices.
+		 * Warn the user about the bootloader version being one of the
+		 * possible causes.
+		 * http://www.spinics.net/lists/arm-kernel/msg218641.html
+		 */
+		pr_warn("A possible cause could be an old bootloader - try u-boot >= v2012.07\n");
+	} else {
 		pr_info("Successfully put all powerdomains to target state\n");
+	}
 
 	return 0;
 }
@@ -101,13 +111,6 @@ static int __init pwrdms_setup(struct powerdomain *pwrdm, void *unused)
 	if (!strncmp(pwrdm->name, "cpu", 3))
 		return 0;
 
-	/*
-	 * FIXME: Remove this check when core retention is supported
-	 * Only MPUSS power domain is added in the list.
-	 */
-	if (strcmp(pwrdm->name, "mpu_pwrdm"))
-		return 0;
-
 	pwrst = kmalloc(sizeof(struct power_state), GFP_ATOMIC);
 	if (!pwrst)
 		return -ENOMEM;
@@ -123,16 +126,12 @@ static int __init pwrdms_setup(struct powerdomain *pwrdm, void *unused)
  * omap_default_idle - OMAP4 default ilde routine.'
  *
  * Implements OMAP4 memory, IO ordering requirements which can't be addressed
- * with default cpu_do_idle() hook. Used by all CPUs with !CONFIG_CPUIDLE and
- * by secondary CPU with CONFIG_CPUIDLE.
+ * with default cpu_do_idle() hook. Used by all CPUs with !CONFIG_CPU_IDLE and
+ * by secondary CPU with CONFIG_CPU_IDLE.
  */
 static void omap_default_idle(void)
 {
-	local_fiq_disable();
-
 	omap_do_wfi();
-
-	local_fiq_enable();
 }
 
 /**
@@ -141,14 +140,11 @@ static void omap_default_idle(void)
  * Initializes all powerdomain and clockdomain target states
  * and all PRCM settings.
  */
-static int __init omap4_pm_init(void)
+int __init omap4_pm_init(void)
 {
 	int ret;
-	struct clockdomain *emif_clkdm, *mpuss_clkdm, *l3_1_clkdm, *l4wkup;
-	struct clockdomain *ducati_clkdm, *l3_2_clkdm, *l4_per_clkdm;
-
-	if (!cpu_is_omap44xx())
-		return -ENODEV;
+	struct clockdomain *emif_clkdm, *mpuss_clkdm, *l3_1_clkdm;
+	struct clockdomain *ducati_clkdm, *l3_2_clkdm;
 
 	if (omap_rev() == OMAP4430_REV_ES1_0) {
 		WARN(1, "Power Management not supported on OMAP4430 ES1.0\n");
@@ -156,6 +152,13 @@ static int __init omap4_pm_init(void)
 	}
 
 	pr_err("Power Management for TI OMAP4.\n");
+	/*
+	 * OMAP4 chip PM currently works only with certain (newer)
+	 * versions of bootloaders. This is due to missing code in the
+	 * kernel to properly reset and initialize some devices.
+	 * http://www.spinics.net/lists/arm-kernel/msg218641.html
+	 */
+	pr_warn("OMAP4 PM: u-boot >= v2012.07 is required for full PM support\n");
 
 	ret = pwrdm_for_each(pwrdms_setup, NULL);
 	if (ret) {
@@ -168,32 +171,23 @@ static int __init omap4_pm_init(void)
 	 * MPUSS -> L4_PER/L3_* and DUCATI -> L3_* doesn't work as
 	 * expected. The hardware recommendation is to enable static
 	 * dependencies for these to avoid system lock ups or random crashes.
-	 * The L4 wakeup depedency is added to workaround the OCP sync hardware
-	 * BUG with 32K synctimer which lead to incorrect timer value read
-	 * from the 32K counter. The BUG applies for GPTIMER1 and WDT2 which
-	 * are part of L4 wakeup clockdomain.
 	 */
 	mpuss_clkdm = clkdm_lookup("mpuss_clkdm");
 	emif_clkdm = clkdm_lookup("l3_emif_clkdm");
 	l3_1_clkdm = clkdm_lookup("l3_1_clkdm");
 	l3_2_clkdm = clkdm_lookup("l3_2_clkdm");
-	l4_per_clkdm = clkdm_lookup("l4_per_clkdm");
-	l4wkup = clkdm_lookup("l4_wkup_clkdm");
 	ducati_clkdm = clkdm_lookup("ducati_clkdm");
-	if ((!mpuss_clkdm) || (!emif_clkdm) || (!l3_1_clkdm) || (!l4wkup) ||
-		(!l3_2_clkdm) || (!ducati_clkdm) || (!l4_per_clkdm))
+	if ((!mpuss_clkdm) || (!emif_clkdm) || (!l3_1_clkdm) ||
+		(!l3_2_clkdm) || (!ducati_clkdm))
 		goto err2;
 
 	ret = clkdm_add_wkdep(mpuss_clkdm, emif_clkdm);
 	ret |= clkdm_add_wkdep(mpuss_clkdm, l3_1_clkdm);
 	ret |= clkdm_add_wkdep(mpuss_clkdm, l3_2_clkdm);
-	ret |= clkdm_add_wkdep(mpuss_clkdm, l4_per_clkdm);
-	ret |= clkdm_add_wkdep(mpuss_clkdm, l4wkup);
 	ret |= clkdm_add_wkdep(ducati_clkdm, l3_1_clkdm);
 	ret |= clkdm_add_wkdep(ducati_clkdm, l3_2_clkdm);
 	if (ret) {
-		pr_err("Failed to add MPUSS -> L3/EMIF/L4PER, DUCATI -> L3 "
-				"wakeup dependency\n");
+		pr_err("Failed to add MPUSS -> L3/EMIF/L4PER, DUCATI -> L3 wakeup dependency\n");
 		goto err2;
 	}
 
@@ -217,4 +211,3 @@ static int __init omap4_pm_init(void)
 err2:
 	return ret;
 }
-late_initcall(omap4_pm_init);

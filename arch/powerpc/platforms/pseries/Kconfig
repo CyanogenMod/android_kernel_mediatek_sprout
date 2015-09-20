@@ -17,6 +17,10 @@ config PPC_PSERIES
 	select PPC_NATIVE
 	select PPC_PCI_CHOICE if EXPERT
 	select ZLIB_DEFLATE
+	select PPC_DOORBELL
+	select HAVE_CONTEXT_TRACKING
+	select HOTPLUG if SMP
+	select HOTPLUG_CPU if SMP
 	default y
 
 config PPC_SPLPAR
@@ -67,7 +71,7 @@ config IO_EVENT_IRQ
 
 	  This option will only enable the IO event platform code. You
 	  will still need to enable or compile the actual drivers
-	  that use this infrastruture to handle IO event interrupts.
+	  that use this infrastructure to handle IO event interrupts.
 
 	  Say Y if you are unsure.
 

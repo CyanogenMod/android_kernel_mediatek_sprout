@@ -4,6 +4,7 @@
 #include <linux/time.h>
 #include <linux/jiffies.h>
 
+<<<<<<< HEAD
 typedef unsigned long __nocast cputime_t;
 
 #define cputime_zero			(0UL)
@@ -80,11 +81,14 @@ typedef u64 __nocast cputime64_t;
 	jiffies_to_clock_t(cputime_to_jiffies(__ct))
 #define clock_t_to_cputime(__x)		\
 	jiffies_to_cputime(clock_t_to_jiffies(__x))
+=======
+#ifndef CONFIG_VIRT_CPU_ACCOUNTING
+# include <asm-generic/cputime_jiffies.h>
+#endif
+>>>>>>> v3.10.88
 
-/*
- * Convert cputime64 to clock.
- */
-#define cputime64_to_clock_t(__ct)	\
-	jiffies_64_to_clock_t(cputime64_to_jiffies64(__ct))
+#ifdef CONFIG_VIRT_CPU_ACCOUNTING_GEN
+# include <asm-generic/cputime_nsecs.h>
+#endif
 
 #endif

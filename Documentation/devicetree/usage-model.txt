@@ -191,9 +191,11 @@ Linux it will look something like this:
 	};
 
 The bootargs property contains the kernel arguments, and the initrd-*
-properties define the address and size of an initrd blob.  The
-chosen node may also optionally contain an arbitrary number of
-additional properties for platform-specific configuration data.
+properties define the address and size of an initrd blob.  Note that
+initrd-end is the first address after the initrd image, so this doesn't
+match the usual semantic of struct resource.  The chosen node may also
+optionally contain an arbitrary number of additional properties for
+platform-specific configuration data.
 
 During early boot, the architecture setup code calls of_scan_flat_dt()
 several times with different helper callbacks to parse device tree
@@ -312,7 +314,7 @@ device tree for the NVIDIA Tegra board.
 	};
 };
 
-At .machine_init() time, Tegra board support code will need to look at
+At .init_machine() time, Tegra board support code will need to look at
 this DT and decide which nodes to create platform_devices for.
 However, looking at the tree, it is not immediately obvious what kind
 of device each node represents, or even if a node represents a device
@@ -347,7 +349,7 @@ later), which will happily live at the base of the Linux /sys/devices
 tree.  Therefore, if a DT node is at the root of the tree, then it
 really probably is best registered as a platform_device.
 
-Linux board support code calls of_platform_populate(NULL, NULL, NULL)
+Linux board support code calls of_platform_populate(NULL, NULL, NULL, NULL)
 to kick off discovery of devices at the root of the tree.  The
 parameters are all NULL because when starting from the root of the
 tree, there is no need to provide a starting node (the first NULL), a

@@ -2,6 +2,7 @@
 #define _ASM_SPARC64_HUGETLB_H
 
 #include <asm/page.h>
+#include <asm-generic/hugetlb.h>
 
 
 void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
@@ -10,7 +11,9 @@ void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
 pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep);
 
-void hugetlb_prefault_arch_hook(struct mm_struct *mm);
+static inline void hugetlb_prefault_arch_hook(struct mm_struct *mm)
+{
+}
 
 static inline int is_hugepage_only_range(struct mm_struct *mm,
 					 unsigned long addr,
@@ -85,6 +88,10 @@ static inline int arch_prepare_hugepage(struct page *page)
 }
 
 static inline void arch_release_hugepage(struct page *page)
+{
+}
+
+static inline void arch_clear_hugepage_flags(struct page *page)
 {
 }
 

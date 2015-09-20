@@ -26,6 +26,7 @@
 #include <linux/stop_machine.h>
 #include <linux/stringify.h>
 #include <asm/traps.h>
+#include <asm/opcodes.h>
 #include <asm/cacheflush.h>
 
 #include "kprobes.h"
@@ -62,10 +63,10 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
 #ifdef CONFIG_THUMB2_KERNEL
 	thumb = true;
 	addr &= ~1; /* Bit 0 would normally be set to indicate Thumb code */
-	insn = ((u16 *)addr)[0];
+	insn = __mem_to_opcode_thumb16(((u16 *)addr)[0]);
 	if (is_wide_instruction(insn)) {
-		insn <<= 16;
-		insn |= ((u16 *)addr)[1];
+		u16 inst2 = __mem_to_opcode_thumb16(((u16 *)addr)[1]);
+		insn = __opcode_thumb32_compose(insn, inst2);
 		decode_insn = thumb32_kprobe_decode_insn;
 	} else
 		decode_insn = thumb16_kprobe_decode_insn;
@@ -73,7 +74,7 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
 	thumb = false;
 	if (addr & 0x3)
 		return -EINVAL;
-	insn = *p->addr;
+	insn = __mem_to_opcode_arm(*p->addr);
 	decode_insn = arm_kprobe_decode_insn;
 #endif
 
@@ -395,7 +396,7 @@ static __used __kprobes void *trampoline_handler(struct pt_regs *regs)
 {
 	struct kretprobe_instance *ri = NULL;
 	struct hlist_head *head, empty_rp;
-	struct hlist_node *node, *tmp;
+	struct hlist_node *tmp;
 	unsigned long flags, orig_ret_address = 0;
 	unsigned long trampoline_address = (unsigned long)&kretprobe_trampoline;
 
@@ -415,7 +416,7 @@ static __used __kprobes void *trampoline_handler(struct pt_regs *regs)
 	 *       real return address, and all the rest will point to
 	 *       kretprobe_trampoline
 	 */
-	hlist_for_each_entry_safe(ri, node, tmp, head, hlist) {
+	hlist_for_each_entry_safe(ri, tmp, head, hlist) {
 		if (ri->task != current)
 			/* another task is sharing our hash bucket */
 			continue;
@@ -442,7 +443,7 @@ static __used __kprobes void *trampoline_handler(struct pt_regs *regs)
 	kretprobe_assert(ri, orig_ret_address, trampoline_address);
 	kretprobe_hash_unlock(current, &flags);
 
-	hlist_for_each_entry_safe(ri, node, tmp, &empty_rp, hlist) {
+	hlist_for_each_entry_safe(ri, tmp, &empty_rp, hlist) {
 		hlist_del(&ri->hlist);
 		kfree(ri);
 	}

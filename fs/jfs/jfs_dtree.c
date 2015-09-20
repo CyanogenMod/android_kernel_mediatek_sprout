@@ -3004,7 +3004,7 @@ static inline struct jfs_dirent *next_jfs_dirent(struct jfs_dirent *dirent)
  */
 int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct inode *ip = filp->f_path.dentry->d_inode;
+	struct inode *ip = file_inode(filp);
 	struct nls_table *codepage = JFS_SBI(ip->i_sb)->nls_tab;
 	int rc = 0;
 	loff_t dtpos;	/* legacy OS/2 style position */
@@ -3103,7 +3103,11 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 				 * self "."
 				 */
 				filp->f_pos = 1;
+<<<<<<< HEAD
 				if (filldir(dirent, ".", 1, 0, ip->i_ino,
+=======
+				if (filldir(dirent, ".", 1, 1, ip->i_ino,
+>>>>>>> v3.10.88
 					    DT_DIR))
 					return 0;
 			}
@@ -3111,7 +3115,11 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			 * parent ".."
 			 */
 			filp->f_pos = 2;
+<<<<<<< HEAD
 			if (filldir(dirent, "..", 2, 1, PARENT(ip), DT_DIR))
+=======
+			if (filldir(dirent, "..", 2, 2, PARENT(ip), DT_DIR))
+>>>>>>> v3.10.88
 				return 0;
 
 			/*

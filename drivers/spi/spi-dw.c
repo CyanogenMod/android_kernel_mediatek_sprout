@@ -394,9 +394,6 @@ static void pump_transfers(unsigned long data)
 	chip = dws->cur_chip;
 	spi = message->spi;
 
-	if (unlikely(!chip->clk_div))
-		chip->clk_div = dws->max_freq / chip->speed_hz;
-
 	if (message->state == ERROR_STATE) {
 		message->status = -EIO;
 		goto early_exit;
@@ -438,7 +435,7 @@ static void pump_transfers(unsigned long data)
 	if (transfer->speed_hz) {
 		speed = chip->speed_hz;
 
-		if (transfer->speed_hz != speed) {
+		if ((transfer->speed_hz != speed) || (!chip->clk_div)) {
 			speed = transfer->speed_hz;
 			if (speed > dws->max_freq) {
 				printk(KERN_ERR "MRST SPI0: unsupported"
@@ -677,7 +674,6 @@ static int dw_spi_setup(struct spi_device *spi)
 		dev_err(&spi->dev, "No max speed HZ parameter\n");
 		return -EINVAL;
 	}
-	chip->speed_hz = spi->max_speed_hz;
 
 	chip->tmode = 0; /* Tx & Rx */
 	/* Default SPI mode is SCPOL = 0, SCPH = 0 */
@@ -696,7 +692,7 @@ static void dw_spi_cleanup(struct spi_device *spi)
 	kfree(chip);
 }
 
-static int __devinit init_queue(struct dw_spi *dws)
+static int init_queue(struct dw_spi *dws)
 {
 	INIT_LIST_HEAD(&dws->queue);
 	spin_lock_init(&dws->lock);
@@ -795,7 +791,7 @@ static void spi_hw_init(struct dw_spi *dws)
 	}
 }
 
-int __devinit dw_spi_add_host(struct dw_spi *dws)
+int dw_spi_add_host(struct dw_spi *dws)
 {
 	struct spi_master *master;
 	int ret;
@@ -877,7 +873,7 @@ exit:
 }
 EXPORT_SYMBOL_GPL(dw_spi_add_host);
 
-void __devexit dw_spi_remove_host(struct dw_spi *dws)
+void dw_spi_remove_host(struct dw_spi *dws)
 {
 	int status = 0;
 

@@ -137,6 +137,7 @@ struct ioat_ring_ent {
 	#ifdef DEBUG
 	int id;
 	#endif
+	struct ioat_sed_ent *sed;
 };
 
 static inline struct ioat_ring_ent *
@@ -155,10 +156,11 @@ static inline void ioat2_set_chainaddr(struct ioat2_dma_chan *ioat, u64 addr)
 	       chan->reg_base + IOAT2_CHAINADDR_OFFSET_HIGH);
 }
 
-int __devinit ioat2_dma_probe(struct ioatdma_device *dev, int dca);
-int __devinit ioat3_dma_probe(struct ioatdma_device *dev, int dca);
-struct dca_provider * __devinit ioat2_dca_init(struct pci_dev *pdev, void __iomem *iobase);
-struct dca_provider * __devinit ioat3_dca_init(struct pci_dev *pdev, void __iomem *iobase);
+int ioat2_dma_probe(struct ioatdma_device *dev, int dca);
+int ioat3_dma_probe(struct ioatdma_device *dev, int dca);
+void ioat3_dma_remove(struct ioatdma_device *dev);
+struct dca_provider *ioat2_dca_init(struct pci_dev *pdev, void __iomem *iobase);
+struct dca_provider *ioat3_dca_init(struct pci_dev *pdev, void __iomem *iobase);
 int ioat2_check_space_lock(struct ioat2_dma_chan *ioat, int num_descs);
 int ioat2_enumerate_channels(struct ioatdma_device *device);
 struct dma_async_tx_descriptor *

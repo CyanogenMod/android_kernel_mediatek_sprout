@@ -41,6 +41,7 @@
 static int zram_major;
 struct zram *zram_devices = NULL;
 
+<<<<<<< HEAD
 /* Compression/Decompression hooks */
 static comp_hook zram_compress = NULL;
 static decomp_hook zram_decompress = NULL;
@@ -55,6 +56,8 @@ void zram_set_hooks(void *compress_func, void *decompress_func)
 }
 EXPORT_SYMBOL(zram_set_hooks);
 
+=======
+>>>>>>> v3.10.88
 /* Module params (documentation at end) */
 static unsigned int num_devices = 1;
 
@@ -178,7 +181,11 @@ static int zram_decompress_page(struct zram *zram, char *mem, u32 index)
 	if (meta->table[index].size == PAGE_SIZE)
 		memcpy(mem, cmem, PAGE_SIZE);
 	else
+<<<<<<< HEAD
 		ret = zram_decompress(cmem, meta->table[index].size,
+=======
+		ret = lzo1x_decompress_safe(cmem, meta->table[index].size,
+>>>>>>> v3.10.88
 						mem, &clen);
 	zs_unmap_object(meta->mem_pool, handle);
 
@@ -223,11 +230,16 @@ static int zram_bvec_read(struct zram *zram, struct bio_vec *bvec,
 
 	ret = zram_decompress_page(zram, uncmem, index);
 	/* Should NEVER happen. Return bio error if it does. */
+<<<<<<< HEAD
 	if (unlikely(ret != LZO_E_OK)) {
 		pr_err("Decompression failed! err=%d, page=%u\n", ret, index);
 		zram_stat64_inc(zram, &zram->stats.failed_reads);
 		goto out_cleanup;
 	}
+=======
+	if (unlikely(ret != LZO_E_OK))
+		goto out_cleanup;
+>>>>>>> v3.10.88
 
 	if (is_partial_io(bvec))
 		memcpy(user_mem + bvec->bv_offset, uncmem + offset,
@@ -262,7 +274,6 @@ static int zram_bvec_write(struct zram *zram, struct bio_vec *bvec, u32 index,
 		 */
 		uncmem = kmalloc(PAGE_SIZE, GFP_NOIO);
 		if (!uncmem) {
-			pr_info("Error allocating temp memory!\n");
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -291,15 +302,23 @@ static int zram_bvec_write(struct zram *zram, struct bio_vec *bvec, u32 index,
 	}
 
 	if (page_zero_filled(uncmem)) {
+<<<<<<< HEAD
 		if (!is_partial_io(bvec))
 			kunmap_atomic(user_mem);
+=======
+		kunmap_atomic(user_mem);
+>>>>>>> v3.10.88
 		zram->stats.pages_zero++;
 		zram_set_flag(meta, index, ZRAM_ZERO);
 		ret = 0;
 		goto out;
 	}
 
+<<<<<<< HEAD
 	ret = zram_compress(uncmem, PAGE_SIZE, src, &clen,
+=======
+	ret = lzo1x_1_compress(uncmem, PAGE_SIZE, src, &clen,
+>>>>>>> v3.10.88
 			       meta->compress_workmem);
 
 	if (!is_partial_io(bvec)) {
@@ -441,13 +460,20 @@ out:
  */
 static inline int valid_io_request(struct zram *zram, struct bio *bio)
 {
-	if (unlikely(
-		(bio->bi_sector >= (zram->disksize >> SECTOR_SHIFT)) ||
-		(bio->bi_sector & (ZRAM_SECTOR_PER_LOGICAL_BLOCK - 1)) ||
-		(bio->bi_size & (ZRAM_LOGICAL_BLOCK_SIZE - 1)))) {
+	u64 start, end, bound;
 
+	/* unaligned request */
+	if (unlikely(bio->bi_sector & (ZRAM_SECTOR_PER_LOGICAL_BLOCK - 1)))
 		return 0;
-	}
+	if (unlikely(bio->bi_size & (ZRAM_LOGICAL_BLOCK_SIZE - 1)))
+		return 0;
+
+	start = bio->bi_sector;
+	end = start + (bio->bi_size >> SECTOR_SHIFT);
+	bound = zram->disksize >> SECTOR_SHIFT;
+	/* out of range range */
+	if (unlikely(start >= bound || end > bound || start > end))
+		return 0;
 
 	/* I/O request is valid */
 	return 1;
@@ -479,7 +505,7 @@ error:
 	bio_io_error(bio);
 }
 
-void __zram_reset_device(struct zram *zram)
+static void __zram_reset_device(struct zram *zram)
 {
 	size_t index;
 	struct zram_meta *meta;
@@ -532,10 +558,15 @@ struct zram_meta *zram_meta_alloc(u64 disksize)
 		goto out;
 
 	meta->compress_workmem = kzalloc(LZO1X_MEM_COMPRESS, GFP_KERNEL);
+<<<<<<< HEAD
 	if (!meta->compress_workmem) {
 		pr_err("Error allocating compressor working memory!\n");
 		goto free_meta;
 	}
+=======
+	if (!meta->compress_workmem)
+		goto free_meta;
+>>>>>>> v3.10.88
 
 	meta->compress_buffer =
 		(void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 1);
@@ -549,6 +580,7 @@ struct zram_meta *zram_meta_alloc(u64 disksize)
 	if (!meta->table) {
 		pr_err("Error allocating zram address table\n");
 		goto free_buffer;
+<<<<<<< HEAD
 	}
 
 	meta->mem_pool = zs_create_pool("zram", GFP_NOIO | __GFP_HIGHMEM);
@@ -572,6 +604,31 @@ out:
 	return meta;
 }
 
+=======
+	}
+
+	meta->mem_pool = zs_create_pool(GFP_NOIO | __GFP_HIGHMEM);
+	if (!meta->mem_pool) {
+		pr_err("Error creating memory pool\n");
+		goto free_table;
+	}
+
+	return meta;
+
+free_table:
+	vfree(meta->table);
+free_buffer:
+	free_pages((unsigned long)meta->compress_buffer, 1);
+free_workmem:
+	kfree(meta->compress_workmem);
+free_meta:
+	kfree(meta);
+	meta = NULL;
+out:
+	return meta;
+}
+
+>>>>>>> v3.10.88
 void zram_init_device(struct zram *zram, struct zram_meta *meta)
 {
 	if (zram->disksize > 2 * (totalram_pages << PAGE_SHIFT)) {
@@ -603,7 +660,9 @@ static void zram_slot_free_notify(struct block_device *bdev,
 	struct zram *zram;
 
 	zram = bdev->bd_disk->private_data;
+	down_write(&zram->lock);
 	zram_free_page(zram, index);
+	up_write(&zram->lock);
 	zram_stat64_inc(zram, &zram->stats.notify_free);
 }
 
@@ -614,7 +673,7 @@ static const struct block_device_operations zram_devops = {
 
 static int create_device(struct zram *zram, int device_id)
 {
-	int ret = 0;
+	int ret = -ENOMEM;
 
 	init_rwsem(&zram->lock);
 	init_rwsem(&zram->init_lock);
@@ -624,7 +683,6 @@ static int create_device(struct zram *zram, int device_id)
 	if (!zram->queue) {
 		pr_err("Error allocating disk queue for device %d\n",
 			device_id);
-		ret = -ENOMEM;
 		goto out;
 	}
 
@@ -634,11 +692,13 @@ static int create_device(struct zram *zram, int device_id)
 	 /* gendisk structure */
 	zram->disk = alloc_disk(1);
 	if (!zram->disk) {
+<<<<<<< HEAD
 		blk_cleanup_queue(zram->queue);
+=======
+>>>>>>> v3.10.88
 		pr_warn("Error allocating disk structure for device %d\n",
 			device_id);
-		ret = -ENOMEM;
-		goto out;
+		goto out_free_queue;
 	}
 
 	zram->disk->major = zram_major;
@@ -667,11 +727,21 @@ static int create_device(struct zram *zram, int device_id)
 				&zram_disk_attr_group);
 	if (ret < 0) {
 		pr_warn("Error creating sysfs group");
+<<<<<<< HEAD
 		goto out;
+=======
+		goto out_free_disk;
+>>>>>>> v3.10.88
 	}
 
 	zram->init_done = 0;
+	return 0;
 
+out_free_disk:
+	del_gendisk(zram->disk);
+	put_disk(zram->disk);
+out_free_queue:
+	blk_cleanup_queue(zram->queue);
 out:
 	return ret;
 }
@@ -775,6 +845,7 @@ static int __init zram_init(void)
 			goto free_devices;
 	}
 
+<<<<<<< HEAD
 	/* Set compression/decompression hooks - Use LZO1X by default */
 	if (!zram_compress || !zram_decompress) {
 		zram_compress = &lzo1x_1_compress;
@@ -783,6 +854,10 @@ static int __init zram_init(void)
 	printk(KERN_ALERT "[%s][%d] ZCompress[%p] ZDecompress[%p]\n",__FUNCTION__,__LINE__,zram_compress,zram_decompress);
 	
 	proc_create("zraminfo", 0, NULL, &zraminfo_proc_fops);
+=======
+	pr_info("Created %u device(s) ...\n", num_devices);
+
+>>>>>>> v3.10.88
 	return 0;
 
 free_devices:
@@ -804,8 +879,13 @@ static void __exit zram_exit(void)
 	for (i = 0; i < num_devices; i++) {
 		zram = &zram_devices[i];
 
+		get_disk(zram->disk);
 		destroy_device(zram);
 		zram_reset_device(zram);
+<<<<<<< HEAD
+=======
+		put_disk(zram->disk);
+>>>>>>> v3.10.88
 	}
 
 	unregister_blkdev(zram_major, "zram");

@@ -81,7 +81,6 @@ static struct crypto_alg alg = {
 	.cra_flags		= CRYPTO_ALG_TYPE_COMPRESS,
 	.cra_ctxsize		= sizeof(struct lzo_ctx),
 	.cra_module		= THIS_MODULE,
-	.cra_list		= LIST_HEAD_INIT(alg.cra_list),
 	.cra_init		= lzo_init,
 	.cra_exit		= lzo_exit,
 	.cra_u			= { .compress = {
@@ -104,3 +103,4 @@ module_exit(lzo_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("LZO Compression Algorithm");
+MODULE_ALIAS_CRYPTO("lzo");

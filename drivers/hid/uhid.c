@@ -11,6 +11,10 @@
  */
 
 #include <linux/atomic.h>
+<<<<<<< HEAD
+=======
+#include <linux/compat.h>
+>>>>>>> v3.10.88
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/hid.h>
@@ -276,6 +280,97 @@ static struct hid_ll_driver uhid_hid_driver = {
 	.parse = uhid_hid_parse,
 };
 
+<<<<<<< HEAD
+=======
+#ifdef CONFIG_COMPAT
+
+/* Apparently we haven't stepped on these rakes enough times yet. */
+struct uhid_create_req_compat {
+	__u8 name[128];
+	__u8 phys[64];
+	__u8 uniq[64];
+
+	compat_uptr_t rd_data;
+	__u16 rd_size;
+
+	__u16 bus;
+	__u32 vendor;
+	__u32 product;
+	__u32 version;
+	__u32 country;
+} __attribute__((__packed__));
+
+static int uhid_event_from_user(const char __user *buffer, size_t len,
+				struct uhid_event *event)
+{
+	if (is_compat_task()) {
+		u32 type;
+
+		if (get_user(type, buffer))
+			return -EFAULT;
+
+		if (type == UHID_CREATE) {
+			/*
+			 * This is our messed up request with compat pointer.
+			 * It is largish (more than 256 bytes) so we better
+			 * allocate it from the heap.
+			 */
+			struct uhid_create_req_compat *compat;
+
+			compat = kzalloc(sizeof(*compat), GFP_KERNEL);
+			if (!compat)
+				return -ENOMEM;
+
+			buffer += sizeof(type);
+			len -= sizeof(type);
+			if (copy_from_user(compat, buffer,
+					   min(len, sizeof(*compat)))) {
+				kfree(compat);
+				return -EFAULT;
+			}
+
+			/* Shuffle the data over to proper structure */
+			event->type = type;
+
+			memcpy(event->u.create.name, compat->name,
+				sizeof(compat->name));
+			memcpy(event->u.create.phys, compat->phys,
+				sizeof(compat->phys));
+			memcpy(event->u.create.uniq, compat->uniq,
+				sizeof(compat->uniq));
+
+			event->u.create.rd_data = compat_ptr(compat->rd_data);
+			event->u.create.rd_size = compat->rd_size;
+
+			event->u.create.bus = compat->bus;
+			event->u.create.vendor = compat->vendor;
+			event->u.create.product = compat->product;
+			event->u.create.version = compat->version;
+			event->u.create.country = compat->country;
+
+			kfree(compat);
+			return 0;
+		}
+		/* All others can be copied directly */
+	}
+
+	if (copy_from_user(event, buffer, min(len, sizeof(*event))))
+		return -EFAULT;
+
+	return 0;
+}
+#else
+static int uhid_event_from_user(const char __user *buffer, size_t len,
+				struct uhid_event *event)
+{
+	if (copy_from_user(event, buffer, min(len, sizeof(*event))))
+		return -EFAULT;
+
+	return 0;
+}
+#endif
+
+>>>>>>> v3.10.88
 static int uhid_dev_create(struct uhid_device *uhid,
 			   const struct uhid_event *ev)
 {
@@ -323,9 +418,12 @@ static int uhid_dev_create(struct uhid_device *uhid,
 	hid->driver_data = uhid;
 	hid->dev.parent = uhid_misc.this_device;
 
+<<<<<<< HEAD
     hid_err(hid, "vendorid=%x, productID=%x\n",
 					hid->vendor, hid->product);
 
+=======
+>>>>>>> v3.10.88
 	uhid->hid = hid;
 	uhid->running = true;
 
@@ -368,8 +466,15 @@ static int uhid_dev_input(struct uhid_device *uhid, struct uhid_event *ev)
 	if (!uhid->running)
 		return -EINVAL;
 
+<<<<<<< HEAD
 	return hid_input_report(uhid->hid, HID_INPUT_REPORT, ev->u.input.data,
 			 min_t(size_t, ev->u.input.size, UHID_DATA_MAX), 0);
+=======
+	hid_input_report(uhid->hid, HID_INPUT_REPORT, ev->u.input.data,
+			 min_t(size_t, ev->u.input.size, UHID_DATA_MAX), 0);
+
+	return 0;
+>>>>>>> v3.10.88
 }
 
 static int uhid_dev_feature_answer(struct uhid_device *uhid,
@@ -499,10 +604,17 @@ static ssize_t uhid_char_write(struct file *file, const char __user *buffer,
 
 	memset(&uhid->input_buf, 0, sizeof(uhid->input_buf));
 	len = min(count, sizeof(uhid->input_buf));
+<<<<<<< HEAD
 	if (copy_from_user(&uhid->input_buf, buffer, len)) {
 		ret = -EFAULT;
 		goto unlock;
 	}
+=======
+
+	ret = uhid_event_from_user(buffer, len, &uhid->input_buf);
+	if (ret)
+		goto unlock;
+>>>>>>> v3.10.88
 
 	switch (uhid->input_buf.type) {
 	case UHID_CREATE:
@@ -540,6 +652,7 @@ static unsigned int uhid_char_poll(struct file *file, poll_table *wait)
 	return 0;
 }
 
+<<<<<<< HEAD
 static const struct hid_device_id uhid_table[] = {
 	{ HID_BLUETOOTH_DEVICE(HID_ANY_ID, HID_ANY_ID) },
 	{ }
@@ -550,6 +663,8 @@ static struct hid_driver uhid_driver = {
 	.id_table = uhid_table,
 };
 
+=======
+>>>>>>> v3.10.88
 static const struct file_operations uhid_fops = {
 	.owner		= THIS_MODULE,
 	.open		= uhid_char_open,
@@ -562,12 +677,17 @@ static const struct file_operations uhid_fops = {
 
 static struct miscdevice uhid_misc = {
 	.fops		= &uhid_fops,
+<<<<<<< HEAD
 	.minor		= MISC_DYNAMIC_MINOR,
+=======
+	.minor		= UHID_MINOR,
+>>>>>>> v3.10.88
 	.name		= UHID_NAME,
 };
 
 static int __init uhid_init(void)
 {
+<<<<<<< HEAD
     int ret;
 	ret = hid_register_driver(&uhid_driver);
 	//hid_warn(uhid->hid, "[hid]hid_register_driver ret = %d\n",ret);
@@ -579,12 +699,18 @@ static int __init uhid_init(void)
 	//hid_warn(uhid->hid, "[hid]misc_register ret = %d\n",ret);
 	
 	return ret;
+=======
+	return misc_register(&uhid_misc);
+>>>>>>> v3.10.88
 }
 
 static void __exit uhid_exit(void)
 {
 	misc_deregister(&uhid_misc);
+<<<<<<< HEAD
 	hid_unregister_driver(&uhid_driver);
+=======
+>>>>>>> v3.10.88
 }
 
 module_init(uhid_init);
@@ -592,3 +718,8 @@ module_exit(uhid_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("David Herrmann <dh.herrmann@gmail.com>");
 MODULE_DESCRIPTION("User-space I/O driver support for HID subsystem");
+<<<<<<< HEAD
+=======
+MODULE_ALIAS_MISCDEV(UHID_MINOR);
+MODULE_ALIAS("devname:" UHID_NAME);
+>>>>>>> v3.10.88

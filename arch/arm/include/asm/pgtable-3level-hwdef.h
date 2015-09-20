@@ -32,6 +32,9 @@
 #define PMD_TYPE_SECT		(_AT(pmdval_t, 1) << 0)
 #define PMD_BIT4		(_AT(pmdval_t, 0))
 #define PMD_DOMAIN(x)		(_AT(pmdval_t, 0))
+#define PMD_APTABLE_SHIFT	(61)
+#define PMD_APTABLE		(_AT(pgdval_t, 3) << PGD_APTABLE_SHIFT)
+#define PMD_PXNTABLE		(_AT(pgdval_t, 1) << 59)
 
 /*
  *   - section
@@ -41,9 +44,11 @@
 #define PMD_SECT_S		(_AT(pmdval_t, 3) << 8)
 #define PMD_SECT_AF		(_AT(pmdval_t, 1) << 10)
 #define PMD_SECT_nG		(_AT(pmdval_t, 1) << 11)
+#define PMD_SECT_PXN		(_AT(pmdval_t, 1) << 53)
 #define PMD_SECT_XN		(_AT(pmdval_t, 1) << 54)
 #define PMD_SECT_AP_WRITE	(_AT(pmdval_t, 0))
 #define PMD_SECT_AP_READ	(_AT(pmdval_t, 0))
+#define PMD_SECT_AP1		(_AT(pmdval_t, 1) << 6)
 #define PMD_SECT_TEX(x)		(_AT(pmdval_t, 0))
 
 /*
@@ -63,6 +68,7 @@
 #define PTE_TYPE_PAGE		(_AT(pteval_t, 3) << 0)
 #define PTE_BUFFERABLE		(_AT(pteval_t, 1) << 2)		/* AttrIndx[0] */
 #define PTE_CACHEABLE		(_AT(pteval_t, 1) << 3)		/* AttrIndx[1] */
+#define PTE_AP2			(_AT(pteval_t, 1) << 7)		/* AP[2] */
 #define PTE_EXT_SHARED		(_AT(pteval_t, 3) << 8)		/* SH[1:0], inner shareable */
 #define PTE_EXT_AF		(_AT(pteval_t, 1) << 10)	/* Access Flag */
 #define PTE_EXT_NG		(_AT(pteval_t, 1) << 11)	/* nG */

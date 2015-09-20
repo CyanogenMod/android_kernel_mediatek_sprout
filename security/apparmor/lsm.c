@@ -352,7 +352,7 @@ static int apparmor_path_chmod(struct path *path, umode_t mode)
 	return common_perm_mnt_dentry(OP_CHMOD, path->mnt, path->dentry, AA_MAY_CHMOD);
 }
 
-static int apparmor_path_chown(struct path *path, uid_t uid, gid_t gid)
+static int apparmor_path_chown(struct path *path, kuid_t uid, kgid_t gid)
 {
 	struct path_cond cond =  { path->dentry->d_inode->i_uid,
 				   path->dentry->d_inode->i_mode
@@ -373,13 +373,13 @@ static int apparmor_inode_getattr(struct vfsmount *mnt, struct dentry *dentry)
 				      AA_MAY_META_READ);
 }
 
-static int apparmor_dentry_open(struct file *file, const struct cred *cred)
+static int apparmor_file_open(struct file *file, const struct cred *cred)
 {
 	struct aa_file_cxt *fcxt = file->f_security;
 	struct aa_profile *profile;
 	int error = 0;
 
-	if (!mediated_filesystem(file->f_path.dentry->d_inode))
+	if (!mediated_filesystem(file_inode(file)))
 		return 0;
 
 	/* If in exec, permission is handled by bprm hooks.
@@ -394,7 +394,7 @@ static int apparmor_dentry_open(struct file *file, const struct cred *cred)
 
 	profile = aa_cred_profile(cred);
 	if (!unconfined(profile)) {
-		struct inode *inode = file->f_path.dentry->d_inode;
+		struct inode *inode = file_inode(file);
 		struct path_cond cond = { inode->i_uid, inode->i_mode };
 
 		error = aa_path_perm(OP_OPEN, profile, &file->f_path, 0,
@@ -432,7 +432,7 @@ static int common_file_perm(int op, struct file *file, u32 mask)
 	BUG_ON(!fprofile);
 
 	if (!file->f_path.mnt ||
-	    !mediated_filesystem(file->f_path.dentry->d_inode))
+	    !mediated_filesystem(file_inode(file)))
 		return 0;
 
 	profile = __aa_current_profile();
@@ -490,17 +490,9 @@ static int common_mmap(int op, struct file *file, unsigned long prot,
 	return common_file_perm(op, file, mask);
 }
 
-static int apparmor_file_mmap(struct file *file, unsigned long reqprot,
-			      unsigned long prot, unsigned long flags,
-			      unsigned long addr, unsigned long addr_only)
+static int apparmor_mmap_file(struct file *file, unsigned long reqprot,
+			      unsigned long prot, unsigned long flags)
 {
-	int rc = 0;
-
-	/* do DAC check */
-	rc = cap_file_mmap(file, reqprot, prot, flags, addr, addr_only);
-	if (rc || addr_only)
-		return rc;
-
 	return common_mmap(OP_FMMAP, file, prot, flags);
 }
 
@@ -589,7 +581,7 @@ static int apparmor_setprocattr(struct task_struct *task, char *name,
 		} else {
 			struct common_audit_data sa;
 			struct apparmor_audit_data aad = {0,};
-			COMMON_AUDIT_DATA_INIT(&sa, NONE);
+			sa.type = LSM_AUDIT_DATA_NONE;
 			sa.aad = &aad;
 			aad.op = OP_SETPROCATTR;
 			aad.info = name;
@@ -640,13 +632,14 @@ static struct security_operations apparmor_ops = {
 	.path_chmod =			apparmor_path_chmod,
 	.path_chown =			apparmor_path_chown,
 	.path_truncate =		apparmor_path_truncate,
-	.dentry_open =			apparmor_dentry_open,
 	.inode_getattr =                apparmor_inode_getattr,
 
+	.file_open =			apparmor_file_open,
 	.file_permission =		apparmor_file_permission,
 	.file_alloc_security =		apparmor_file_alloc_security,
 	.file_free_security =		apparmor_file_free_security,
-	.file_mmap =			apparmor_file_mmap,
+	.mmap_file =			apparmor_mmap_file,
+	.mmap_addr =			cap_mmap_addr,
 	.file_mprotect =		apparmor_file_mprotect,
 	.file_lock =			apparmor_file_lock,
 

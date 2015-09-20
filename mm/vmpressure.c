@@ -21,7 +21,10 @@
 #include <linux/eventfd.h>
 #include <linux/swap.h>
 #include <linux/printk.h>
+<<<<<<< HEAD
 #include <linux/slab.h>
+=======
+>>>>>>> v3.10.88
 #include <linux/vmpressure.h>
 
 /*

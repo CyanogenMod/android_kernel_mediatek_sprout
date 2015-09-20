@@ -111,6 +111,7 @@ static int bf5xx_i2s_hw_params(struct snd_pcm_substream *substream,
 		bf5xx_i2s->tcr2 |= 7;
 		bf5xx_i2s->rcr2 |= 7;
 		sport_handle->wdsize = 1;
+		break;
 	case SNDRV_PCM_FORMAT_S16_LE:
 		bf5xx_i2s->tcr2 |= 15;
 		bf5xx_i2s->rcr2 |= 15;
@@ -245,7 +246,11 @@ static struct snd_soc_dai_driver bf5xx_i2s_dai = {
 	.ops = &bf5xx_i2s_dai_ops,
 };
 
-static int __devinit bf5xx_i2s_probe(struct platform_device *pdev)
+static const struct snd_soc_component_driver bf5xx_i2s_component = {
+	.name		= "bf5xx-i2s",
+};
+
+static int bf5xx_i2s_probe(struct platform_device *pdev)
 {
 	struct sport_device *sport_handle;
 	int ret;
@@ -257,7 +262,8 @@ static int __devinit bf5xx_i2s_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	/* register with the ASoC layers */
-	ret = snd_soc_register_dai(&pdev->dev, &bf5xx_i2s_dai);
+	ret = snd_soc_register_component(&pdev->dev, &bf5xx_i2s_component,
+					 &bf5xx_i2s_dai, 1);
 	if (ret) {
 		pr_err("Failed to register DAI: %d\n", ret);
 		sport_done(sport_handle);
@@ -267,13 +273,13 @@ static int __devinit bf5xx_i2s_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit bf5xx_i2s_remove(struct platform_device *pdev)
+static int bf5xx_i2s_remove(struct platform_device *pdev)
 {
 	struct sport_device *sport_handle = platform_get_drvdata(pdev);
 
 	pr_debug("%s enter\n", __func__);
 
-	snd_soc_unregister_dai(&pdev->dev);
+	snd_soc_unregister_component(&pdev->dev);
 	sport_done(sport_handle);
 
 	return 0;
@@ -281,7 +287,7 @@ static int __devexit bf5xx_i2s_remove(struct platform_device *pdev)
 
 static struct platform_driver bfin_i2s_driver = {
 	.probe  = bf5xx_i2s_probe,
-	.remove = __devexit_p(bf5xx_i2s_remove),
+	.remove = bf5xx_i2s_remove,
 	.driver = {
 		.name = "bfin-i2s",
 		.owner = THIS_MODULE,

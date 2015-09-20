@@ -95,6 +95,12 @@ static int rawsock_connect(struct socket *sock, struct sockaddr *_addr,
 		goto error;
 	}
 
+	if (addr->target_idx > dev->target_next_idx - 1 ||
+	    addr->target_idx < dev->target_next_idx - dev->n_targets) {
+		rc = -EINVAL;
+		goto error;
+	}
+
 	rc = nfc_activate_target(dev, addr->target_idx, addr->nfc_protocol);
 	if (rc)
 		goto put_dev;
@@ -235,8 +241,6 @@ static int rawsock_recvmsg(struct kiocb *iocb, struct socket *sock,
 	if (!skb)
 		return rc;
 
-	msg->msg_namelen = 0;
-
 	copied = skb->len;
 	if (len < copied) {
 		msg->msg_flags |= MSG_TRUNC;
@@ -249,7 +253,6 @@ static int rawsock_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 	return rc ? : copied;
 }
-
 
 static const struct proto_ops rawsock_ops = {
 	.family         = PF_NFC,

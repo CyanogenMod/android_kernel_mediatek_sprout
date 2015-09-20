@@ -34,6 +34,22 @@
 #define MII_BUSY 0x00000001
 #define MII_WRITE 0x00000002
 
+static int stmmac_mdio_busy_wait(void __iomem *ioaddr, unsigned int mii_addr)
+{
+	unsigned long curr;
+	unsigned long finish = jiffies + 3 * HZ;
+
+	do {
+		curr = jiffies;
+		if (readl(ioaddr + mii_addr) & MII_BUSY)
+			cpu_relax();
+		else
+			return 0;
+	} while (!time_after_eq(curr, finish));
+
+	return -EBUSY;
+}
+
 /**
  * stmmac_mdio_read
  * @bus: points to the mii_bus structure
@@ -54,11 +70,15 @@ static int stmmac_mdio_read(struct mii_bus *bus, int phyaddr, int phyreg)
 	int data;
 	u16 regValue = (((phyaddr << 11) & (0x0000F800)) |
 			((phyreg << 6) & (0x000007C0)));
-	regValue |= MII_BUSY | ((priv->plat->clk_csr & 7) << 2);
+	regValue |= MII_BUSY | ((priv->clk_csr & 0xF) << 2);
 
-	do {} while (((readl(priv->ioaddr + mii_address)) & MII_BUSY) == 1);
+	if (stmmac_mdio_busy_wait(priv->ioaddr, mii_address))
+		return -EBUSY;
+
 	writel(regValue, priv->ioaddr + mii_address);
-	do {} while (((readl(priv->ioaddr + mii_address)) & MII_BUSY) == 1);
+
+	if (stmmac_mdio_busy_wait(priv->ioaddr, mii_address))
+		return -EBUSY;
 
 	/* Read the data from the MII data register */
 	data = (int)readl(priv->ioaddr + mii_data);
@@ -86,20 +106,18 @@ static int stmmac_mdio_write(struct mii_bus *bus, int phyaddr, int phyreg,
 	    (((phyaddr << 11) & (0x0000F800)) | ((phyreg << 6) & (0x000007C0)))
 	    | MII_WRITE;
 
-	value |= MII_BUSY | ((priv->plat->clk_csr & 7) << 2);
-
+	value |= MII_BUSY | ((priv->clk_csr & 0xF) << 2);
 
 	/* Wait until any existing MII operation is complete */
-	do {} while (((readl(priv->ioaddr + mii_address)) & MII_BUSY) == 1);
+	if (stmmac_mdio_busy_wait(priv->ioaddr, mii_address))
+		return -EBUSY;
 
 	/* Set the MII address register to write */
 	writel(phydata, priv->ioaddr + mii_data);
 	writel(value, priv->ioaddr + mii_address);
 
 	/* Wait until any existing MII operation is complete */
-	do {} while (((readl(priv->ioaddr + mii_address)) & MII_BUSY) == 1);
-
-	return 0;
+	return stmmac_mdio_busy_wait(priv->ioaddr, mii_address);
 }
 
 /**
@@ -159,7 +177,7 @@ int stmmac_mdio_register(struct net_device *ndev)
 	new_bus->write = &stmmac_mdio_write;
 	new_bus->reset = &stmmac_mdio_reset;
 	snprintf(new_bus->id, MII_BUS_ID_SIZE, "%s-%x",
-		new_bus->name, mdio_bus_data->bus_id);
+		 new_bus->name, priv->plat->bus_id);
 	new_bus->priv = ndev;
 	new_bus->irq = irqlist;
 	new_bus->phy_mask = mdio_bus_data->phy_mask;
@@ -169,8 +187,6 @@ int stmmac_mdio_register(struct net_device *ndev)
 		pr_err("%s: Cannot register as MDIO bus\n", new_bus->name);
 		goto bus_register_fail;
 	}
-
-	priv->mii = new_bus;
 
 	found = 0;
 	for (addr = 0; addr < PHY_MAX_ADDR; addr++) {
@@ -195,12 +211,10 @@ int stmmac_mdio_register(struct net_device *ndev)
 			 * and no PHY number was provided to the MAC,
 			 * use the one probed here.
 			 */
-			if ((priv->plat->bus_id == mdio_bus_data->bus_id) &&
-			    (priv->plat->phy_addr == -1))
+			if (priv->plat->phy_addr == -1)
 				priv->plat->phy_addr = addr;
 
-			act = (priv->plat->bus_id == mdio_bus_data->bus_id) &&
-				(priv->plat->phy_addr == addr);
+			act = (priv->plat->phy_addr == addr);
 			switch (phydev->irq) {
 			case PHY_POLL:
 				irq_str = "POLL";
@@ -221,8 +235,14 @@ int stmmac_mdio_register(struct net_device *ndev)
 		}
 	}
 
-	if (!found)
+	if (!found) {
 		pr_warning("%s: No PHY found\n", ndev->name);
+		mdiobus_unregister(new_bus);
+		mdiobus_free(new_bus);
+		return -ENODEV;
+	}
+
+	priv->mii = new_bus;
 
 	return 0;
 
@@ -239,6 +259,9 @@ bus_register_fail:
 int stmmac_mdio_unregister(struct net_device *ndev)
 {
 	struct stmmac_priv *priv = netdev_priv(ndev);
+
+	if (!priv->mii)
+		return 0;
 
 	mdiobus_unregister(priv->mii);
 	priv->mii->priv = NULL;

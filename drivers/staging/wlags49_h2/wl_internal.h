@@ -11,7 +11,7 @@
  *
  *------------------------------------------------------------------------------
  *
- *   Header for defintions and macros internal to the drvier.
+ *   Header for definitions and macros internal to the drvier.
  *
  *------------------------------------------------------------------------------
  *
@@ -838,7 +838,7 @@ typedef struct dma_strct
 	DESC_STRCT  *rx_packet[NUM_RX_DESC];
 	DESC_STRCT  *rx_reclaim_desc, *tx_reclaim_desc; // Descriptors for host-reclaim purposes (see HCF)
 	int         tx_rsc_ind; // DMA Tx resource indicator is maintained in the MSF, not in the HCF
-	int         rx_rsc_ind; // Also added rx rsource indicator so that cleanup can be performed if alloc fails
+	int         rx_rsc_ind; // Also added rx resource indicator so that cleanup can be performed if alloc fails
 	int         status;
 } DMA_STRCT;
 
@@ -1014,7 +1014,7 @@ static inline void wl_unlock(struct wl_private *lp,
 /* Interrupt enable disable functions                               */
 /********************************************************************/
 
-extern inline void wl_act_int_on(struct wl_private *lp)
+static inline void wl_act_int_on(struct wl_private *lp)
 {
 	/*
 	 * Only do something when the driver is handling
@@ -1026,7 +1026,7 @@ extern inline void wl_act_int_on(struct wl_private *lp)
 	}
 }
 
-extern inline void wl_act_int_off(struct wl_private *lp)
+static inline void wl_act_int_off(struct wl_private *lp)
 {
 	/*
 	 * Only do something when the driver is handling

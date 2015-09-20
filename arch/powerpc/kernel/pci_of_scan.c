@@ -198,14 +198,13 @@ EXPORT_SYMBOL(of_create_pci_dev);
 
 /**
  * of_scan_pci_bridge - Set up a PCI bridge and scan for child nodes
- * @node: device tree node of bridge
  * @dev: pci_dev structure for the bridge
  *
  * of_scan_bus() calls this routine for each PCI bridge that it finds, and
  * this routine in turn call of_scan_bus() recusively to scan for more child
  * devices.
  */
-void __devinit of_scan_pci_bridge(struct pci_dev *dev)
+void of_scan_pci_bridge(struct pci_dev *dev)
 {
 	struct device_node *node = dev->dev.of_node;
 	struct pci_bus *bus;
@@ -240,7 +239,7 @@ void __devinit of_scan_pci_bridge(struct pci_dev *dev)
 	}
 
 	bus->primary = dev->bus->number;
-	bus->subordinate = busrange[1];
+	pci_bus_insert_busn_res(bus, busrange[0], busrange[1]);
 	bus->bridge_ctl = 0;
 
 	/* parse ranges property */
@@ -300,8 +299,8 @@ EXPORT_SYMBOL(of_scan_pci_bridge);
  * @bus: pci_bus structure for the PCI bus
  * @rescan_existing: Flag indicating bus has already been set up
  */
-static void __devinit __of_scan_bus(struct device_node *node,
-				    struct pci_bus *bus, int rescan_existing)
+static void __of_scan_bus(struct device_node *node, struct pci_bus *bus,
+			  int rescan_existing)
 {
 	struct device_node *child;
 	const u32 *reg;
@@ -349,8 +348,7 @@ static void __devinit __of_scan_bus(struct device_node *node,
  * @node: device tree node for the PCI bus
  * @bus: pci_bus structure for the PCI bus
  */
-void __devinit of_scan_bus(struct device_node *node,
-			   struct pci_bus *bus)
+void of_scan_bus(struct device_node *node, struct pci_bus *bus)
 {
 	__of_scan_bus(node, bus, 0);
 }
@@ -364,8 +362,7 @@ EXPORT_SYMBOL_GPL(of_scan_bus);
  * Same as of_scan_bus, but for a pci_bus structure that has already been
  * setup.
  */
-void __devinit of_rescan_bus(struct device_node *node,
-			     struct pci_bus *bus)
+void of_rescan_bus(struct device_node *node, struct pci_bus *bus)
 {
 	__of_scan_bus(node, bus, 1);
 }

@@ -30,8 +30,8 @@ static void ncp_do_readdir(struct file *, void *, filldir_t,
 
 static int ncp_readdir(struct file *, void *, filldir_t);
 
-static int ncp_create(struct inode *, struct dentry *, umode_t, struct nameidata *);
-static struct dentry *ncp_lookup(struct inode *, struct dentry *, struct nameidata *);
+static int ncp_create(struct inode *, struct dentry *, umode_t, bool);
+static struct dentry *ncp_lookup(struct inode *, struct dentry *, unsigned int);
 static int ncp_unlink(struct inode *, struct dentry *);
 static int ncp_mkdir(struct inode *, struct dentry *, umode_t);
 static int ncp_rmdir(struct inode *, struct dentry *);
@@ -72,7 +72,7 @@ const struct inode_operations ncp_dir_inode_operations =
 /*
  * Dentry operations routines
  */
-static int ncp_lookup_validate(struct dentry *, struct nameidata *);
+static int ncp_lookup_validate(struct dentry *, unsigned int);
 static int ncp_hash_dentry(const struct dentry *, const struct inode *,
 		struct qstr *);
 static int ncp_compare_dentry(const struct dentry *, const struct inode *,
@@ -290,7 +290,7 @@ leave_me:;
 
 
 static int
-ncp_lookup_validate(struct dentry *dentry, struct nameidata *nd)
+ncp_lookup_validate(struct dentry *dentry, unsigned int flags)
 {
 	struct ncp_server *server;
 	struct dentry *parent;
@@ -302,7 +302,7 @@ ncp_lookup_validate(struct dentry *dentry, struct nameidata *nd)
 	if (dentry == dentry->d_sb->s_root)
 		return 1;
 
-	if (nd->flags & LOOKUP_RCU)
+	if (flags & LOOKUP_RCU)
 		return -ECHILD;
 
 	parent = dget_parent(dentry);
@@ -391,7 +391,7 @@ ncp_dget_fpos(struct dentry *dentry, struct dentry *parent, unsigned long fpos)
 	spin_lock(&parent->d_lock);
 	next = parent->d_subdirs.next;
 	while (next != &parent->d_subdirs) {
-		dent = list_entry(next, struct dentry, d_u.d_child);
+		dent = list_entry(next, struct dentry, d_child);
 		if ((unsigned long)dent->d_fsdata == fpos) {
 			if (dent->d_inode)
 				dget(dent);
@@ -593,14 +593,10 @@ ncp_fill_cache(struct file *filp, void *dirent, filldir_t filldir,
 		return 1; /* I'm not sure */
 
 	qname.name = __name;
-	qname.hash = full_name_hash(qname.name, qname.len);
 
-	if (dentry->d_op && dentry->d_op->d_hash)
-		if (dentry->d_op->d_hash(dentry, dentry->d_inode, &qname) != 0)
-			goto end_advance;
-
-	newdent = d_lookup(dentry, &qname);
-
+	newdent = d_hash_and_lookup(dentry, &qname);
+	if (unlikely(IS_ERR(newdent)))
+		goto end_advance;
 	if (!newdent) {
 		newdent = d_alloc(dentry, &qname);
 		if (!newdent)
@@ -836,7 +832,7 @@ out:
 	return result;
 }
 
-static struct dentry *ncp_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
+static struct dentry *ncp_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 {
 	struct ncp_server *server = NCP_SERVER(dir);
 	struct inode *inode = NULL;
@@ -980,7 +976,7 @@ out:
 }
 
 static int ncp_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-		struct nameidata *nd)
+		bool excl)
 {
 	return ncp_create_new(dir, dentry, mode, 0, 0);
 }
@@ -1032,15 +1028,6 @@ static int ncp_rmdir(struct inode *dir, struct dentry *dentry)
 
 	DPRINTK("ncp_rmdir: removing %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
-
-	/*
-	 * fail with EBUSY if there are still references to this
-	 * directory.
-	 */
-	dentry_unhash(dentry);
-	error = -EBUSY;
-	if (!d_unhashed(dentry))
-		goto out;
 
 	len = sizeof(__name);
 	error = ncp_io2vol(server, __name, &len, dentry->d_name.name,

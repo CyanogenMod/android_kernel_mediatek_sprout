@@ -153,7 +153,7 @@ static int bq32k_probe(struct i2c_client *client,
 	if (error)
 		return error;
 
-	rtc = rtc_device_register(bq32k_driver.driver.name, &client->dev,
+	rtc = devm_rtc_device_register(&client->dev, bq32k_driver.driver.name,
 						&bq32k_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc))
 		return PTR_ERR(rtc);
@@ -163,11 +163,8 @@ static int bq32k_probe(struct i2c_client *client,
 	return 0;
 }
 
-static int __devexit bq32k_remove(struct i2c_client *client)
+static int bq32k_remove(struct i2c_client *client)
 {
-	struct rtc_device *rtc = i2c_get_clientdata(client);
-
-	rtc_device_unregister(rtc);
 	return 0;
 }
 
@@ -183,7 +180,7 @@ static struct i2c_driver bq32k_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= bq32k_probe,
-	.remove		= __devexit_p(bq32k_remove),
+	.remove		= bq32k_remove,
 	.id_table	= bq32k_id,
 };
 

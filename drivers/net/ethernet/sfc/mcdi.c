@@ -207,7 +207,9 @@ out:
 	return 0;
 }
 
-/* Test and clear MC-rebooted flag for this port/function */
+/* Test and clear MC-rebooted flag for this port/function; reset
+ * software state as necessary.
+ */
 int efx_mcdi_poll_reboot(struct efx_nic *efx)
 {
 	unsigned int addr = FR_CZ_MC_TREG_SMEM + MCDI_STATUS(efx);
@@ -222,6 +224,11 @@ int efx_mcdi_poll_reboot(struct efx_nic *efx)
 
 	if (value == 0)
 		return 0;
+
+	/* MAC statistics have been cleared on the NIC; clear our copy
+	 * so that efx_update_diff_stat() can continue to work.
+	 */
+	memset(&efx->mac_stats, 0, sizeof(efx->mac_stats));
 
 	EFX_ZERO_DWORD(reg);
 	efx_writed(efx, &reg, addr);
@@ -320,14 +327,20 @@ static void efx_mcdi_ev_cpl(struct efx_nic *efx, unsigned int seqno,
 		efx_mcdi_complete(mcdi);
 }
 
-/* Issue the given command by writing the data into the shared memory PDU,
- * ring the doorbell and wait for completion. Copyout the result. */
 int efx_mcdi_rpc(struct efx_nic *efx, unsigned cmd,
 		 const u8 *inbuf, size_t inlen, u8 *outbuf, size_t outlen,
 		 size_t *outlen_actual)
 {
+	efx_mcdi_rpc_start(efx, cmd, inbuf, inlen);
+	return efx_mcdi_rpc_finish(efx, cmd, inlen,
+				   outbuf, outlen, outlen_actual);
+}
+
+void efx_mcdi_rpc_start(struct efx_nic *efx, unsigned cmd, const u8 *inbuf,
+			size_t inlen)
+{
 	struct efx_mcdi_iface *mcdi = efx_mcdi(efx);
-	int rc;
+
 	BUG_ON(efx_nic_rev(efx) < EFX_REV_SIENA_A0);
 
 	efx_mcdi_acquire(mcdi);
@@ -338,6 +351,15 @@ int efx_mcdi_rpc(struct efx_nic *efx, unsigned cmd,
 	spin_unlock_bh(&mcdi->iface_lock);
 
 	efx_mcdi_copyin(efx, cmd, inbuf, inlen);
+}
+
+int efx_mcdi_rpc_finish(struct efx_nic *efx, unsigned cmd, size_t inlen,
+			u8 *outbuf, size_t outlen, size_t *outlen_actual)
+{
+	struct efx_mcdi_iface *mcdi = efx_mcdi(efx);
+	int rc;
+
+	BUG_ON(efx_nic_rev(efx) < EFX_REV_SIENA_A0);
 
 	if (mcdi->mode == MCDI_MODE_POLL)
 		rc = efx_mcdi_poll(efx);
@@ -563,6 +585,11 @@ void efx_mcdi_process_event(struct efx_channel *channel,
 	case MCDI_EVENT_CODE_FLR:
 		efx_sriov_flr(efx, MCDI_EVENT_FIELD(*event, FLR_VF));
 		break;
+	case MCDI_EVENT_CODE_PTP_RX:
+	case MCDI_EVENT_CODE_PTP_FAULT:
+	case MCDI_EVENT_CODE_PTP_PPS:
+		efx_ptp_event(efx, event);
+		break;
 
 	default:
 		netif_err(efx, hw, efx->net_dev, "Unknown MCDI event 0x%x\n",
@@ -663,12 +690,23 @@ int efx_mcdi_get_board_cfg(struct efx_nic *efx, u8 *mac_address,
 	if (mac_address)
 		memcpy(mac_address, outbuf + offset, ETH_ALEN);
 	if (fw_subtype_list) {
+<<<<<<< HEAD
 		offset = MC_CMD_GET_BOARD_CFG_OUT_FW_SUBTYPE_LIST_OFST;
 		for (i = 0;
 		     i < MC_CMD_GET_BOARD_CFG_OUT_FW_SUBTYPE_LIST_MINNUM;
 		     i++) {
 			fw_subtype_list[i] =
 				le16_to_cpup((__le16 *)(outbuf + offset));
+=======
+		/* Byte-swap and truncate or zero-pad as necessary */
+		offset = MC_CMD_GET_BOARD_CFG_OUT_FW_SUBTYPE_LIST_OFST;
+		for (i = 0;
+		     i < MC_CMD_GET_BOARD_CFG_OUT_FW_SUBTYPE_LIST_MAXNUM;
+		     i++) {
+			fw_subtype_list[i] =
+				(offset + 2 <= outlen) ?
+				le16_to_cpup((__le16 *)(outbuf + offset)) : 0;
+>>>>>>> v3.10.88
 			offset += 2;
 		}
 	}
@@ -1005,12 +1043,17 @@ static void efx_mcdi_exit_assertion(struct efx_nic *efx)
 {
 	u8 inbuf[MC_CMD_REBOOT_IN_LEN];
 
-	/* Atomically reboot the mcfw out of the assertion handler */
+	/* If the MC is running debug firmware, it might now be
+	 * waiting for a debugger to attach, but we just want it to
+	 * reboot.  We set a flag that makes the command a no-op if it
+	 * has already done so.  We don't know what return code to
+	 * expect (0 or -EIO), so ignore it.
+	 */
 	BUILD_BUG_ON(MC_CMD_REBOOT_OUT_LEN != 0);
 	MCDI_SET_DWORD(inbuf, REBOOT_IN_FLAGS,
 		       MC_CMD_REBOOT_FLAGS_AFTER_ASSERTION);
-	efx_mcdi_rpc(efx, MC_CMD_REBOOT, inbuf, MC_CMD_REBOOT_IN_LEN,
-		     NULL, 0, NULL);
+	(void) efx_mcdi_rpc(efx, MC_CMD_REBOOT, inbuf, MC_CMD_REBOOT_IN_LEN,
+			    NULL, 0, NULL);
 }
 
 int efx_mcdi_handle_assertion(struct efx_nic *efx)
@@ -1189,7 +1232,7 @@ int efx_mcdi_flush_rxqs(struct efx_nic *efx)
 
 	rc = efx_mcdi_rpc(efx, MC_CMD_FLUSH_RX_QUEUES, (u8 *)qid,
 			  count * sizeof(*qid), NULL, 0, NULL);
-	WARN_ON(rc > 0);
+	WARN_ON(rc < 0);
 
 	kfree(qid);
 

@@ -244,8 +244,8 @@ static void __init lsmini_init(void)
 	orion5x_uart0_init();
 	orion5x_xor_init();
 
-	orion5x_setup_dev_boot_win(LSMINI_NOR_BOOT_BASE,
-				   LSMINI_NOR_BOOT_SIZE);
+	mvebu_mbus_add_window("devbus-boot", LSMINI_NOR_BOOT_BASE,
+			      LSMINI_NOR_BOOT_SIZE);
 	platform_device_register(&lsmini_nor_flash);
 
 	platform_device_register(&lsmini_button_device);
@@ -271,7 +271,7 @@ MACHINE_START(LINKSTATION_MINI, "Buffalo Linkstation Mini")
 	.map_io		= orion5x_map_io,
 	.init_early	= orion5x_init_early,
 	.init_irq	= orion5x_init_irq,
-	.timer		= &orion5x_timer,
+	.init_time	= orion5x_timer_init,
 	.fixup		= tag_fixup_mem32,
 	.restart	= orion5x_restart,
 MACHINE_END

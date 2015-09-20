@@ -40,12 +40,12 @@
 #include <mach/pxa27x.h>
 #include <mach/audio.h>
 #include <mach/palmtx.h>
-#include <mach/mmc.h>
-#include <mach/pxafb.h>
-#include <mach/irda.h>
-#include <plat/pxa27x_keypad.h>
+#include <linux/platform_data/mmc-pxamci.h>
+#include <linux/platform_data/video-pxafb.h>
+#include <linux/platform_data/irda-pxaficp.h>
+#include <linux/platform_data/keypad-pxa27x.h>
 #include <mach/udc.h>
-#include <mach/palmasoc.h>
+#include <linux/platform_data/asoc-palm27x.h>
 #include <mach/palm27x.h>
 
 #include "generic.h"
@@ -268,8 +268,6 @@ static struct mtd_partition palmtx_partition_info[] = {
 	},
 };
 
-static const char *palmtx_part_probes[] = { "cmdlinepart", NULL };
-
 struct platform_nand_data palmtx_nand_platdata = {
 	.chip	= {
 		.nr_chips		= 1,
@@ -277,7 +275,6 @@ struct platform_nand_data palmtx_nand_platdata = {
 		.nr_partitions		= ARRAY_SIZE(palmtx_partition_info),
 		.partitions		= palmtx_partition_info,
 		.chip_delay		= 20,
-		.part_probe_types 	= palmtx_part_probes,
 	},
 	.ctrl	= {
 		.cmd_ctrl	= palmtx_nand_cmd_ctl,
@@ -369,7 +366,7 @@ MACHINE_START(PALMTX, "Palm T|X")
 	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa27x_init_irq,
 	.handle_irq	= pxa27x_handle_irq,
-	.timer		= &pxa_timer,
+	.init_time	= pxa_timer_init,
 	.init_machine	= palmtx_init,
 	.restart	= pxa_restart,
 MACHINE_END

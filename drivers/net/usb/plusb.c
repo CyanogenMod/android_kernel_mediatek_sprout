@@ -71,13 +71,10 @@
 static inline int
 pl_vendor_req(struct usbnet *dev, u8 req, u8 val, u8 index)
 {
-	return usb_control_msg(dev->udev,
-		usb_rcvctrlpipe(dev->udev, 0),
-		req,
-		USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-		val, index,
-		NULL, 0,
-		USB_CTRL_GET_TIMEOUT);
+	return usbnet_read_cmd(dev, req,
+				USB_DIR_IN | USB_TYPE_VENDOR |
+				USB_RECIP_DEVICE,
+				val, index, NULL, 0);
 }
 
 static inline int
@@ -139,6 +136,11 @@ static const struct usb_device_id	products [] = {
 }, {
 	USB_DEVICE(0x050d, 0x258a),     /* Belkin F5U258/F5U279 (PL-25A1) */
 	.driver_info =  (unsigned long) &prolific_info,
+}, {
+	USB_DEVICE(0x3923, 0x7825),     /* National Instruments USB
+					 * Host-to-Host Cable
+					 */
+	.driver_info =  (unsigned long) &prolific_info,
 },
 
 	{ },		// END
@@ -152,6 +154,7 @@ static struct usb_driver plusb_driver = {
 	.disconnect =	usbnet_disconnect,
 	.suspend =	usbnet_suspend,
 	.resume =	usbnet_resume,
+	.disable_hub_initiated_lpm = 1,
 };
 
 module_usb_driver(plusb_driver);

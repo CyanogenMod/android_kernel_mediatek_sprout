@@ -243,7 +243,7 @@ static void tsc_stop(struct input_dev *dev)
 	clk_disable(ts->clk);
 }
 
-static int __devinit tsc_probe(struct platform_device *pdev)
+static int tsc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct tsc_data *ts;
@@ -297,7 +297,7 @@ static int __devinit tsc_probe(struct platform_device *pdev)
 		goto error_clk;
 	}
 
-	error = request_threaded_irq(ts->tsc_irq, NULL, tsc_irq, 0,
+	error = request_threaded_irq(ts->tsc_irq, NULL, tsc_irq, IRQF_ONESHOT,
 				     dev_name(dev), ts);
 	if (error < 0) {
 		dev_err(ts->dev, "Could not allocate ts irq\n");
@@ -357,7 +357,7 @@ error_res:
 	return error;
 }
 
-static int __devexit tsc_remove(struct platform_device *pdev)
+static int tsc_remove(struct platform_device *pdev)
 {
 	struct tsc_data *ts = platform_get_drvdata(pdev);
 
@@ -374,7 +374,7 @@ static int __devexit tsc_remove(struct platform_device *pdev)
 
 static struct platform_driver tsc_driver = {
 	.probe		= tsc_probe,
-	.remove		= __devexit_p(tsc_remove),
+	.remove		= tsc_remove,
 	.driver.name	= "tnetv107x-ts",
 	.driver.owner	= THIS_MODULE,
 };

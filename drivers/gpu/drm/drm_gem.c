@@ -36,7 +36,7 @@
 #include <linux/pagemap.h>
 #include <linux/shmem_fs.h>
 #include <linux/dma-buf.h>
-#include "drmP.h"
+#include <drm/drmP.h>
 
 /** @file drm_gem.c
  *
@@ -202,6 +202,19 @@ free:
 }
 EXPORT_SYMBOL(drm_gem_object_alloc);
 
+static void
+drm_gem_remove_prime_handles(struct drm_gem_object *obj, struct drm_file *filp)
+{
+	if (obj->import_attach) {
+		drm_prime_remove_buf_handle(&filp->prime,
+				obj->import_attach->dmabuf);
+	}
+	if (obj->export_dma_buf) {
+		drm_prime_remove_buf_handle(&filp->prime,
+				obj->export_dma_buf);
+	}
+}
+
 /**
  * Removes the mapping from handle to filp for this object.
  */
@@ -234,9 +247,7 @@ drm_gem_handle_delete(struct drm_file *filp, u32 handle)
 	idr_remove(&filp->object_idr, handle);
 	spin_unlock(&filp->table_lock);
 
-	if (obj->import_attach)
-		drm_prime_remove_imported_buf_handle(&filp->prime,
-				obj->import_attach->dmabuf);
+	drm_gem_remove_prime_handles(obj, filp);
 
 	if (dev->driver->gem_close_object)
 		dev->driver->gem_close_object(obj, filp);
@@ -260,22 +271,19 @@ drm_gem_handle_create(struct drm_file *file_priv,
 	int ret;
 
 	/*
-	 * Get the user-visible handle using idr.
+	 * Get the user-visible handle using idr.  Preload and perform
+	 * allocation under our spinlock.
 	 */
-again:
-	/* ensure there is space available to allocate a handle */
-	if (idr_pre_get(&file_priv->object_idr, GFP_KERNEL) == 0)
-		return -ENOMEM;
-
-	/* do the allocation under our spinlock */
+	idr_preload(GFP_KERNEL);
 	spin_lock(&file_priv->table_lock);
-	ret = idr_get_new_above(&file_priv->object_idr, obj, 1, (int *)handlep);
-	spin_unlock(&file_priv->table_lock);
-	if (ret == -EAGAIN)
-		goto again;
 
-	if (ret != 0)
+	ret = idr_alloc(&file_priv->object_idr, obj, 1, 0, GFP_NOWAIT);
+
+	spin_unlock(&file_priv->table_lock);
+	idr_preload_end();
+	if (ret < 0)
 		return ret;
+	*handlep = ret;
 
 	drm_gem_object_handle_reference(obj);
 
@@ -330,7 +338,7 @@ drm_gem_create_mmap_offset(struct drm_gem_object *obj)
 	struct drm_gem_mm *mm = dev->mm_private;
 	struct drm_map_list *list;
 	struct drm_local_map *map;
-	int ret = 0;
+	int ret;
 
 	/* Set the object up for mmap'ing */
 	list = &obj->map_list;
@@ -345,7 +353,7 @@ drm_gem_create_mmap_offset(struct drm_gem_object *obj)
 
 	/* Get a DRM GEM mmap offset allocated... */
 	list->file_offset_node = drm_mm_search_free(&mm->offset_manager,
-			obj->size / PAGE_SIZE, 0, 0);
+			obj->size / PAGE_SIZE, 0, false);
 
 	if (!list->file_offset_node) {
 		DRM_ERROR("failed to allocate offset for bo %d\n", obj->name);
@@ -442,34 +450,25 @@ drm_gem_flink_ioctl(struct drm_device *dev, void *data,
 	if (obj == NULL)
 		return -ENOENT;
 
-again:
-	if (idr_pre_get(&dev->object_name_idr, GFP_KERNEL) == 0) {
-		ret = -ENOMEM;
-		goto err;
-	}
-
+	idr_preload(GFP_KERNEL);
 	spin_lock(&dev->object_name_lock);
 	if (!obj->name) {
-		ret = idr_get_new_above(&dev->object_name_idr, obj, 1,
-					&obj->name);
-		args->name = (uint64_t) obj->name;
-		spin_unlock(&dev->object_name_lock);
-
-		if (ret == -EAGAIN)
-			goto again;
-
-		if (ret != 0)
+		ret = idr_alloc(&dev->object_name_idr, obj, 1, 0, GFP_NOWAIT);
+		if (ret < 0)
 			goto err;
+
+		obj->name = ret;
 
 		/* Allocate a reference for the name table.  */
 		drm_gem_object_reference(obj);
-	} else {
-		args->name = (uint64_t) obj->name;
-		spin_unlock(&dev->object_name_lock);
-		ret = 0;
 	}
 
+	args->name = (uint64_t) obj->name;
+	ret = 0;
+
 err:
+	spin_unlock(&dev->object_name_lock);
+	idr_preload_end();
 	drm_gem_object_unreference_unlocked(obj);
 	return ret;
 }
@@ -533,9 +532,7 @@ drm_gem_object_release_handle(int id, void *ptr, void *data)
 	struct drm_gem_object *obj = ptr;
 	struct drm_device *dev = obj->dev;
 
-	if (obj->import_attach)
-		drm_prime_remove_imported_buf_handle(&file_priv->prime,
-				obj->import_attach->dmabuf);
+	drm_gem_remove_prime_handles(obj, file_priv);
 
 	if (dev->driver->gem_close_object)
 		dev->driver->gem_close_object(obj, file_priv);
@@ -555,8 +552,6 @@ drm_gem_release(struct drm_device *dev, struct drm_file *file_private)
 {
 	idr_for_each(&file_private->object_idr,
 		     &drm_gem_object_release_handle, file_private);
-
-	idr_remove_all(&file_private->object_idr);
 	idr_destroy(&file_private->object_idr);
 }
 
@@ -629,7 +624,7 @@ void drm_gem_vm_open(struct vm_area_struct *vma)
 	drm_gem_object_reference(obj);
 
 	mutex_lock(&obj->dev->struct_mutex);
-	drm_vm_open_locked(vma);
+	drm_vm_open_locked(obj->dev, vma);
 	mutex_unlock(&obj->dev->struct_mutex);
 }
 EXPORT_SYMBOL(drm_gem_vm_open);
@@ -640,7 +635,7 @@ void drm_gem_vm_close(struct vm_area_struct *vma)
 	struct drm_device *dev = obj->dev;
 
 	mutex_lock(&dev->struct_mutex);
-	drm_vm_close_locked(vma);
+	drm_vm_close_locked(obj->dev, vma);
 	drm_gem_object_unreference(obj);
 	mutex_unlock(&dev->struct_mutex);
 }
@@ -700,7 +695,7 @@ int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 		goto out_unlock;
 	}
 
-	vma->vm_flags |= VM_RESERVED | VM_IO | VM_PFNMAP | VM_DONTEXPAND;
+	vma->vm_flags |= VM_IO | VM_PFNMAP | VM_DONTEXPAND | VM_DONTDUMP;
 	vma->vm_ops = obj->dev->driver->gem_vm_ops;
 	vma->vm_private_data = map->handle;
 	vma->vm_page_prot =  pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
@@ -713,7 +708,7 @@ int drm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	 */
 	drm_gem_object_reference(obj);
 
-	drm_vm_open_locked(vma);
+	drm_vm_open_locked(dev, vma);
 
 out_unlock:
 	mutex_unlock(&dev->struct_mutex);

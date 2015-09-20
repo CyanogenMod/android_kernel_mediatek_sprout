@@ -1,22 +1,13 @@
 /*
- *  include/asm-s390/signal.h
- *
  *  S390 version
  *
  *  Derived from "include/asm-i386/signal.h"
  */
-
 #ifndef _ASMS390_SIGNAL_H
 #define _ASMS390_SIGNAL_H
 
-#include <linux/types.h>
-#include <linux/time.h>
+#include <uapi/asm/signal.h>
 
-/* Avoid too many header ordering problems.  */
-struct siginfo;
-struct pt_regs;
-
-#ifdef __KERNEL__
 /* Most things should be clean enough to redefine this at will, if care
    is taken to make libc match.  */
 #include <asm/sigcontext.h>
@@ -30,6 +21,7 @@ typedef struct {
         unsigned long sig[_NSIG_WORDS];
 } sigset_t;
 
+<<<<<<< HEAD
 #else
 /* Here we must cater to libcs that poke about in kernel headers.  */
 
@@ -170,4 +162,7 @@ typedef struct sigaltstack {
 } stack_t;
 
 
+=======
+#define __ARCH_HAS_SA_RESTORER
+>>>>>>> v3.10.88
 #endif

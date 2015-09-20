@@ -3189,7 +3189,7 @@ static int skge_poll(struct napi_struct *napi, int to_do)
 	if (work_done < to_do) {
 		unsigned long flags;
 
-		napi_gro_flush(napi);
+		napi_gro_flush(napi, false);
 		spin_lock_irqsave(&hw->hw_lock, flags);
 		__napi_complete(napi);
 		hw->intr_mask |= napimask[skge->port];
@@ -3855,12 +3855,11 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 
 	/* read the mac address */
 	memcpy_fromio(dev->dev_addr, hw->regs + B2_MAC_1 + port*8, ETH_ALEN);
-	memcpy(dev->perm_addr, dev->dev_addr, dev->addr_len);
 
 	return dev;
 }
 
-static void __devinit skge_show_addr(struct net_device *dev)
+static void skge_show_addr(struct net_device *dev)
 {
 	const struct skge_port *skge = netdev_priv(dev);
 
@@ -3869,8 +3868,7 @@ static void __devinit skge_show_addr(struct net_device *dev)
 
 static int only_32bit_dma;
 
-static int __devinit skge_probe(struct pci_dev *pdev,
-				const struct pci_device_id *ent)
+static int skge_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *dev, *dev1;
 	struct skge_hw *hw;
@@ -3918,10 +3916,9 @@ static int __devinit skge_probe(struct pci_dev *pdev,
 	/* space for skge@pci:0000:04:00.0 */
 	hw = kzalloc(sizeof(*hw) + strlen(DRV_NAME "@pci:")
 		     + strlen(pci_name(pdev)) + 1, GFP_KERNEL);
-	if (!hw) {
-		dev_err(&pdev->dev, "cannot allocate hardware struct\n");
+	if (!hw)
 		goto err_out_free_regions;
-	}
+
 	sprintf(hw->irq_name, DRV_NAME "@pci:%s", pci_name(pdev));
 
 	hw->pdev = pdev;
@@ -3945,8 +3942,10 @@ static int __devinit skge_probe(struct pci_dev *pdev,
 		skge_board_name(hw), hw->chip_rev);
 
 	dev = skge_devinit(hw, 0, using_dac);
-	if (!dev)
+	if (!dev) {
+		err = -ENOMEM;
 		goto err_out_led_off;
+	}
 
 	/* Some motherboards are broken and has zero in ROM. */
 	if (!is_valid_ether_addr(dev->dev_addr))
@@ -4010,7 +4009,7 @@ err_out:
 	return err;
 }
 
-static void __devexit skge_remove(struct pci_dev *pdev)
+static void skge_remove(struct pci_dev *pdev)
 {
 	struct skge_hw *hw  = pci_get_drvdata(pdev);
 	struct net_device *dev0, *dev1;
@@ -4024,7 +4023,7 @@ static void __devexit skge_remove(struct pci_dev *pdev)
 	dev0 = hw->dev[0];
 	unregister_netdev(dev0);
 
-	tasklet_disable(&hw->phy_task);
+	tasklet_kill(&hw->phy_task);
 
 	spin_lock_irq(&hw->hw_lock);
 	hw->intr_mask = 0;
@@ -4140,7 +4139,7 @@ static struct pci_driver skge_driver = {
 	.name =         DRV_NAME,
 	.id_table =     skge_id_table,
 	.probe =        skge_probe,
-	.remove =       __devexit_p(skge_remove),
+	.remove =       skge_remove,
 	.shutdown =	skge_shutdown,
 	.driver.pm =	SKGE_PM_OPS,
 };

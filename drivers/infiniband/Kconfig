@@ -51,6 +51,7 @@ source "drivers/infiniband/hw/cxgb3/Kconfig"
 source "drivers/infiniband/hw/cxgb4/Kconfig"
 source "drivers/infiniband/hw/mlx4/Kconfig"
 source "drivers/infiniband/hw/nes/Kconfig"
+source "drivers/infiniband/hw/ocrdma/Kconfig"
 
 source "drivers/infiniband/ulp/ipoib/Kconfig"
 
@@ -58,5 +59,6 @@ source "drivers/infiniband/ulp/srp/Kconfig"
 source "drivers/infiniband/ulp/srpt/Kconfig"
 
 source "drivers/infiniband/ulp/iser/Kconfig"
+source "drivers/infiniband/ulp/isert/Kconfig"
 
 endif # INFINIBAND

@@ -7,8 +7,8 @@
  */
 
 #include <linux/module.h>
-#include "drm_usb.h"
-#include "drm_crtc_helper.h"
+#include <drm/drm_usb.h>
+#include <drm/drm_crtc_helper.h>
 #include "udl_drv.h"
 
 static struct drm_driver driver;
@@ -51,7 +51,7 @@ static void udl_usb_disconnect(struct usb_interface *interface)
 	drm_unplug_dev(dev);
 }
 
-static struct vm_operations_struct udl_gem_vm_ops = {
+static const struct vm_operations_struct udl_gem_vm_ops = {
 	.fault = udl_gem_fault,
 	.open = drm_gem_vm_open,
 	.close = drm_gem_vm_close,
@@ -66,11 +66,14 @@ static const struct file_operations udl_driver_fops = {
 	.unlocked_ioctl	= drm_ioctl,
 	.release = drm_release,
 	.fasync = drm_fasync,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl = drm_compat_ioctl,
+#endif
 	.llseek = noop_llseek,
 };
 
 static struct drm_driver driver = {
-	.driver_features = DRIVER_MODESET | DRIVER_GEM,
+	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_PRIME,
 	.load = udl_driver_load,
 	.unload = udl_driver_unload,
 
@@ -83,6 +86,10 @@ static struct drm_driver driver = {
 	.dumb_map_offset = udl_gem_mmap,
 	.dumb_destroy = udl_dumb_destroy,
 	.fops = &udl_driver_fops,
+
+	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_import = udl_gem_prime_import,
+
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
