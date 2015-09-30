@@ -44,6 +44,11 @@
 #include <alsps.h>
 #include <linux/sched.h>
 #include <mach/sensors_ssb.h>
+
+#ifdef CONFIG_POCKETMOD
+#include <linux/pocket_mod.h>
+#endif
+
 /******************************************************************************
  * configuration
 *******************************************************************************/
@@ -1024,6 +1029,45 @@ static int TMD2771_get_ps_value(struct TMD2771_priv *obj, u16 ps)
     }
 }
 
+#ifdef CONFIG_POCKETMOD
+int tmd2771_pocket_detection_check(void)
+{
+	int ps_val;
+	int als_val;
+
+	struct TMD2771_priv *obj = TMD2771_obj;
+	
+	if(obj == NULL)
+	{
+		APS_DBG("[TMD2771] TMD2771_obj is NULL!");
+		return 0;
+	}
+	else
+	{
+		TMD2771_enable_ps(obj->client, 1);
+
+		// @agaphetos
+		// to do: msleep(1) will be replaced 
+
+		// @thewisenerd
+		// buffer pocket_mod value
+		// sensor_check will otherwise be called every time a touch is made when screen off
+		// simply add a cputime_t;
+		// if ktime_to_ms - cputime_t < 2*sec { do not prox_check }
+		// else { prox_check }
+		msleep(1);
+
+		ps_val = TMD2771_get_ps_value(obj, obj->ps);
+		als_val = TMD2771_get_als_value(obj, obj->ps);
+
+		APS_DBG("[TMD2771] %s als_val = %d, ps_val = %d\n", __func__, als_val, ps_val);
+
+		TMD2771_enable_ps(obj->client, 0);
+
+		return (ps_val);
+	}
+}
+#endif
 
 /*----------------------------------------------------------------------------*/
 /*for interrup work mode support -- by liaoxl.lenovo 12.08.2011*/
@@ -2128,6 +2172,11 @@ static int update_alsps_data(void)
             TMD2771_get_cust_alsps_hw()->als_level[i] = tmd2771_alsps_data->als_level[i];
         for (i=0; i<16; i++)
             TMD2771_get_cust_alsps_hw()->als_value[i] = tmd2771_alsps_data->als_value[i];
+
+	#ifdef CONFIG_POCKETMOD
+		alsps_dev = 't';
+	#endif
+
         APS_LOG("[%s]tmd2771 success update addr=0x%x,i2c_num=%d,threshold_high=%d,threshold_low=%d\n",
         __func__,tmd2771_alsps_data->i2c_addr[0],tmd2771_alsps_data->i2c_num,tmd2771_alsps_data->ps_threshold_high,tmd2771_alsps_data->ps_threshold_low);
     }
