@@ -606,10 +606,7 @@ void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to)
 	struct page *page;
 	pgoff_t index;
 
-<<<<<<< HEAD
-=======
 	WARN_ON(!mutex_is_locked(&inode->i_mutex));
->>>>>>> android-6.0.0_r0.6
 	WARN_ON(to > inode->i_size);
 
 	if (from >= to || bsize == PAGE_CACHE_SIZE)
