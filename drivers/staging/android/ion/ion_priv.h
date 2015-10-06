@@ -210,6 +210,7 @@ struct ion_heap_ops {
 			 struct vm_area_struct *vma);
 	int (*shrink)(struct ion_heap *heap, gfp_t gfp_mask, int nr_to_scan);
 	void (*add_freelist) (struct ion_buffer *buffer);
+	int (*page_pool_total)(struct ion_heap *heap);
 };
 
 /**
@@ -267,6 +268,7 @@ struct ion_heap {
 	spinlock_t free_lock;
 	wait_queue_head_t waitqueue;
 	struct task_struct *task;
+
 	int (*debug_show)(struct ion_heap *heap, struct seq_file *, void *);
 };
 

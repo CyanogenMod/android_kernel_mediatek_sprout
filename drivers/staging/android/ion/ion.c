@@ -464,6 +464,7 @@ static struct ion_handle *ion_handle_lookup(struct ion_client *client,
 
 	while (n) {
 		struct ion_handle *entry = rb_entry(n, struct ion_handle, node);
+
 		if (buffer < entry->buffer)
 			n = n->rb_left;
 		else if (buffer > entry->buffer)
@@ -776,25 +777,57 @@ void ion_unmap_kernel(struct ion_client *client, struct ion_handle *handle)
 }
 EXPORT_SYMBOL(ion_unmap_kernel);
 
+static int ion_client_validate(struct ion_device *dev,
+				struct ion_client *client)
+{
+	struct rb_node *n;
+
+	for (n = rb_first(&dev->clients); n; n = rb_next(n)) {
+		struct ion_client *valid_client = rb_entry(n, struct ion_client, node);
+		if (client == valid_client)
+			return 1;
+	}
+
+	return 0;
+}
+
+extern struct ion_device *g_ion_device;
 static int ion_debug_client_show(struct seq_file *s, void *unused)
 {
 	struct ion_client *client = s->private;
+	struct ion_device *dev = g_ion_device;
 	struct rb_node *n;
 	size_t sizes[ION_NUM_HEAP_IDS] = {0};
 	const char *names[ION_NUM_HEAP_IDS] = {NULL};
 	int i;
 
+	down_read(&dev->lock);
+	if (!ion_client_validate(dev, client)) {
+		pr_err("%s: client is invalid.\n", __func__);
+		up_read(&dev->lock);
+		return -1;
+	}
+
+	seq_printf(s, "%16.s %8.s %8.s %8.s %8.s %8.s\n",
+		"heap_name", "pid", "size", "handle_count", "handle", "buffer");
+
 	mutex_lock(&client->lock);
 	for (n = rb_first(&client->handles); n; n = rb_next(n)) {
 		struct ion_handle *handle = rb_entry(n, struct ion_handle,
 						     node);
-		unsigned int id = handle->buffer->heap->id;
+		struct ion_buffer *buffer = handle->buffer;
+		unsigned int id = buffer->heap->id;
 
 		if (!names[id])
-			names[id] = handle->buffer->heap->name;
-		sizes[id] += handle->buffer->size;
+			names[id] = buffer->heap->name;
+		sizes[id] += buffer->size;
+
+		seq_printf(s, "%16.s %3d %8zu %3d %p %p\n", buffer->heap->name,
+					client->pid, buffer->size, buffer->handle_count, handle, buffer);
 	}
 	mutex_unlock(&client->lock);
+
+	seq_puts(s, "----------------------------------------------------\n");
 
 	seq_printf(s, "%16.16s: %16.16s\n", "heap_name", "size_in_bytes");
 	for (i = 0; i < ION_NUM_HEAP_IDS; i++) {
@@ -802,6 +835,9 @@ static int ion_debug_client_show(struct seq_file *s, void *unused)
 			continue;
 		seq_printf(s, "%16.16s: %16zu\n", names[i], sizes[i]);
 	}
+
+	up_read(&dev->lock);
+
 	return 0;
 }
 
@@ -822,9 +858,11 @@ static int ion_get_client_serial(const struct rb_root *root,
 {
 	int serial = -1;
 	struct rb_node *node;
+
 	for (node = rb_first(root); node; node = rb_next(node)) {
 		struct ion_client *client = rb_entry(node, struct ion_client,
 						node);
+
 		if (strcmp(client->name, name))
 			continue;
 		serial = max(serial, client->display_serial);
@@ -1176,12 +1214,14 @@ static int ion_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 static void ion_dma_buf_release(struct dma_buf *dmabuf)
 {
 	struct ion_buffer *buffer = dmabuf->priv;
+
 	ion_buffer_put(buffer);
 }
 
 static void *ion_dma_buf_kmap(struct dma_buf *dmabuf, unsigned long offset)
 {
 	struct ion_buffer *buffer = dmabuf->priv;
+
 	return buffer->vaddr + offset * PAGE_SIZE;
 }
 
@@ -1463,6 +1503,7 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case ION_IOC_IMPORT:
 	{
 		struct ion_handle *handle;
+
 		handle = __ion_import_dma_buf(client, data.fd.fd, 0);
 		if (IS_ERR(handle))
 		{
@@ -1568,6 +1609,7 @@ static int ion_debug_heap_show(struct seq_file *s, void *unused)
 		struct ion_client *client = rb_entry(n, struct ion_client,
 						     node);
 		size_t size = ion_debug_heap_total(client, heap->id);
+
 		if (!size)
 			continue;
 		if (client->task) {
@@ -1628,6 +1670,28 @@ static const struct file_operations debug_heap_fops = {
 	.release = single_release,
 };
 
+static int ion_debug_heap_pool_show(struct seq_file *s, void *unused)
+{
+	struct ion_heap *heap = s->private;
+	size_t total_size = heap->ops->page_pool_total(heap);
+
+	seq_printf(s, "%16.s %16zu\n", "total_in_pool ", total_size);
+
+	return 0;
+}
+
+static int ion_debug_heap_pool_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ion_debug_heap_pool_show, inode->i_private);
+}
+
+static const struct file_operations debug_heap_pool_fops = {
+	.open = ion_debug_heap_pool_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
 #ifdef DEBUG_HEAP_SHRINKER
 static int debug_shrink_set(void *data, u64 val)
 {
@@ -1669,6 +1733,7 @@ DEFINE_SIMPLE_ATTRIBUTE(debug_shrink_fops, debug_shrink_get,
 void ion_device_add_heap(struct ion_device *dev, struct ion_heap *heap)
 {
 	struct dentry *debug_file;
+	char tmp_name[64];
 
 	if (!heap->ops->allocate || !heap->ops->free || !heap->ops->map_dma ||
 	    !heap->ops->unmap_dma)
@@ -1693,6 +1758,7 @@ void ion_device_add_heap(struct ion_device *dev, struct ion_heap *heap)
 
 	if (!debug_file) {
 		char buf[256], *path;
+
 		path = dentry_path(dev->heaps_debug_root, buf, 256);
 		pr_err("Failed to create heap debugfs at %s/%s\n",
 			path, heap->name);
@@ -1708,12 +1774,24 @@ void ion_device_add_heap(struct ion_device *dev, struct ion_heap *heap)
 			&debug_shrink_fops);
 		if (!debug_file) {
 			char buf[256], *path;
+
 			path = dentry_path(dev->heaps_debug_root, buf, 256);
 			pr_err("Failed to create heap shrinker debugfs at %s/%s\n",
 				path, debug_name);
 		}
 	}
 #endif
+
+	snprintf(tmp_name, ARRAY_SIZE(tmp_name), "%s_total_in_pool", heap->name);
+	debug_file = debugfs_create_file(
+			tmp_name, 0644, dev->heaps_debug_root, heap,
+				     &debug_heap_pool_fops);
+	if (!debug_file) {
+		char buf[256], *path;
+		path = dentry_path(dev->heaps_debug_root, buf, ARRAY_SIZE(buf));
+		pr_err("Failed to create heap page pool debugfs at %s/%s\n", path, tmp_name);
+	}
+
 	up_write(&dev->lock);
 }
 
@@ -1787,6 +1865,7 @@ void __init ion_reserve(struct ion_platform_data *data)
 
 		if (data->heaps[i].base == 0) {
 			phys_addr_t paddr;
+
 			paddr = memblock_alloc_base(data->heaps[i].size,
 						    data->heaps[i].align,
 						    MEMBLOCK_ALLOC_ANYWHERE);

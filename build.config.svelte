@@ -1,5 +1,5 @@
 ARCH=arm
-BRANCH=android-mediatek-sprout-3.10-lmp-mr1-svelte
+BRANCH=android-mediatek-sprout-3.10-svelte
 CROSS_COMPILE=arm-eabi-
 DEFCONFIG=sprout-svelte_defconfig
 EXTRA_CMDS=''
