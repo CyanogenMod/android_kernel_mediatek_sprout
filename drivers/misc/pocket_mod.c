@@ -95,7 +95,7 @@ static ssize_t pocket_mod_set(struct device *dev,
 	return size;
 }
 
-static DEVICE_ATTR(enable, 0777,
+static DEVICE_ATTR(enable, (S_IWUSR|S_IRUGO),
 		pocket_mod_show, pocket_mod_set);
 
 static ssize_t pocket_mod_timeout_show(struct device *dev,
