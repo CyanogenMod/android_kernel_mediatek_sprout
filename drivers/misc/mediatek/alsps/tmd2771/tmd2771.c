@@ -1045,16 +1045,7 @@ int tmd2771_pocket_detection_check(void)
 	{
 		TMD2771_enable_ps(obj->client, 1);
 
-		// @agaphetos
-		// to do: msleep(1) will be replaced 
-
-		// @thewisenerd
-		// buffer pocket_mod value
-		// sensor_check will otherwise be called every time a touch is made when screen off
-		// simply add a cputime_t;
-		// if ktime_to_ms - cputime_t < 2*sec { do not prox_check }
-		// else { prox_check }
-		msleep(1);
+		msleep(50);
 
 		ps_val = TMD2771_get_ps_value(obj, obj->ps);
 
