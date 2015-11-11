@@ -121,7 +121,7 @@ static DEVICE_ATTR(timeout, (S_IWUSR|S_IRUGO),
 
 static struct attribute *pocket_mod_attributes[] =
 {
-	&dev_attr_enable.attr,
+	&dev_attr_pocket_mod_enable.attr,
 	&dev_attr_timeout.attr,
 	NULL
 };
