@@ -1033,7 +1033,6 @@ static int TMD2771_get_ps_value(struct TMD2771_priv *obj, u16 ps)
 int tmd2771_pocket_detection_check(void)
 {
 	int ps_val;
-	int als_val;
 
 	struct TMD2771_priv *obj = TMD2771_obj;
 	
@@ -1058,9 +1057,8 @@ int tmd2771_pocket_detection_check(void)
 		msleep(1);
 
 		ps_val = TMD2771_get_ps_value(obj, obj->ps);
-		als_val = TMD2771_get_als_value(obj, obj->ps);
 
-		APS_DBG("[TMD2771] %s als_val = %d, ps_val = %d\n", __func__, als_val, ps_val);
+		APS_DBG("[TMD2771] %s ps_val = %d\n", __func__, ps_val);
 
 		TMD2771_enable_ps(obj->client, 0);
 

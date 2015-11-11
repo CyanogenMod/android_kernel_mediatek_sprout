@@ -610,7 +610,6 @@ static int cm36283_get_als_value(struct cm36283_priv *obj, u16 als)
 int cm36283_pocket_detection_check(void)
 {
 	int ps_val;
-	int als_val;
 
 	struct cm36283_priv *obj = cm36283_obj;
 	
@@ -635,9 +634,8 @@ int cm36283_pocket_detection_check(void)
 		msleep(1);
 
 		ps_val = cm36283_get_ps_value(obj, obj->ps);
-		als_val = cm36283_get_als_value(obj, obj->ps);
 
-		APS_DBG("[CM36283] %s als_val = %d, ps_val = %d\n", __func__, als_val, ps_val);
+		APS_DBG("[CM36283] %s ps_val = %d\n", __func__, ps_val);
 
 		cm36283_enable_ps(obj->client, 0);
 
