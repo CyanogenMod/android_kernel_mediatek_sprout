@@ -45,6 +45,8 @@ static unsigned int pocket_mod_timeout = 600;
 static cputime64_t read_time_pre = 0;
 static int prev_res = 0;
 
+static int (*sensor_check)(void) = NULL;
+
 int device_is_pocketed(void) {
 
 	if (!(pocket_mod_switch))
@@ -61,25 +63,12 @@ int device_is_pocketed(void) {
 			read_time_pre = ktime_to_ms(ktime_get());
 		}
 		if (pocket_mod_switch){
-			if (alsps_dev == 't')
-			{
-				if (tmd2771_pocket_detection_check() == 1) {
-					prev_res = 0;				
-					return 0;
-				} else {
-					prev_res = 1;
-					return 1;
-				}
-			}
-			else if (alsps_dev == 'c')
-			{
-				if (cm36283_pocket_detection_check() == 1) {
-					prev_res = 0;
-					return 0;
-				} else {
-					prev_res = 1;
-					return 1;
-				}<
+			if (sensor_check() == 1) {
+				prev_res = 0;
+				return 0;
+			} else {
+				prev_res = 1;
+				return 1;
 			}
 		}
 	}
