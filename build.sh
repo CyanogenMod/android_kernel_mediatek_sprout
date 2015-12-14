@@ -35,7 +35,7 @@ echo -e "$blue***********************************************"
 echo "          Compiling ThunderZap kernel          "
 echo -e "***********************************************$nocol"
 make cyanogenmod_sprout_defconfig
-make -j32
+make -j12
 if ! [ -a $ZIMAGE ];
 then
 echo -e "$red Kernel Compilation failed! Fix the errors! $nocol"
