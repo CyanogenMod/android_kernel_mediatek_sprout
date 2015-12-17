@@ -572,7 +572,7 @@ _KFIFO_ALLOC_FAIL:
 	return ret;
 }
 
-void ccci_rpc_exit(int md_id)
+void __exit ccci_rpc_exit(int md_id)
 {
 	rpc_ctl_block_t		*ctl_b;
 

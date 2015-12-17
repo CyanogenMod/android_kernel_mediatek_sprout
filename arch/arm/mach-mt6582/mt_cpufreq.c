@@ -1378,8 +1378,7 @@ static int mt_cpufreq_init(struct cpufreq_policy *policy)
 
 #if defined(CONFIG_CPU_FREQ_GOV_HOTPLUG)
     /* install callback */
-    if(strcmp(policy->governor->name, "hotplug") == 0)
-        cpufreq_freq_check = _downgrade_freq_check;
+    cpufreq_freq_check = _downgrade_freq_check;
 #endif
 
     if (ret) {
@@ -1687,11 +1686,9 @@ void mt_cpufreq_thermal_protect(unsigned int limited_power)
         g_limited_max_freq = g_max_freq_by_ptp;
 
         cpufreq_driver_target(policy, g_limited_max_freq, CPUFREQ_RELATION_L);
-#if defined(CONFIG_CPU_FREQ_GOV_HOTPLUG)
-    if(strcmp(policy->governor->name, "hotplug") == 0) {
+#if defined(CONFIG_CPU_FREQ_GOV_HOTPLUG)		
         hp_limited_cpu_num(g_limited_max_ncpu);
         dbs_freq_thermal_limited(0, g_limited_max_freq);
-    }
 #endif
         xlog_printk(ANDROID_LOG_INFO, "Power/DVFS", "thermal limit g_limited_max_freq = %d, g_limited_max_ncpu = %d\n", g_limited_max_freq, g_limited_max_ncpu);
     }
@@ -1735,7 +1732,6 @@ void mt_cpufreq_thermal_protect(unsigned int limited_power)
 
         xlog_printk(ANDROID_LOG_INFO, "Power/DVFS", "thermal limit g_limited_max_freq = %d, g_limited_max_ncpu = %d\n", g_limited_max_freq, g_limited_max_ncpu);
 #if defined(CONFIG_CPU_FREQ_GOV_HOTPLUG)
-    if(strcmp(policy->governor->name, "hotplug") == 0)
         hp_limited_cpu_num(g_limited_max_ncpu);
 #endif
 
@@ -1752,7 +1748,6 @@ void mt_cpufreq_thermal_protect(unsigned int limited_power)
 
 
 #if defined(CONFIG_CPU_FREQ_GOV_HOTPLUG)
-    if(strcmp(policy->governor->name, "hotplug") == 0)
         dbs_freq_thermal_limited(1, g_limited_max_freq);
 #endif
     }

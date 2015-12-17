@@ -38,7 +38,11 @@ typedef struct
 
 extern void ccci_reset_buffers(shared_mem_tty_t *shared_mem, int size);
 extern int __init ccci_tty_init(int);
+<<<<<<< HEAD
 extern void ccci_tty_exit(int);
+=======
+extern void __exit ccci_tty_exit(int);
+>>>>>>> 957cf21... Merge tag 'v3.10.94' into v4.0
 
 
 #endif // __CCCI_TTY_H__
