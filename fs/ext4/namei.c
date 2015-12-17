@@ -2096,11 +2096,9 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 	blocks = dir->i_size >> sb->s_blocksize_bits;
 	for (block = 0; block < blocks; block++) {
 		bh = ext4_read_dirblock(dir, block, DIRENT);
-		if (IS_ERR(bh)) {
-			retval = PTR_ERR(bh);
-			bh = NULL;
-			goto out;
-		}
+		if (IS_ERR(bh))
+			return PTR_ERR(bh);
+
 		retval = add_dirent_to_buf(handle, &fname, dir, inode,
 					   NULL, bh);
 		if (retval != -ENOSPC)
@@ -2129,7 +2127,6 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 		t = EXT4_DIRENT_TAIL(bh->b_data, blocksize);
 		initialize_dirent_tail(t, blocksize);
 	}
-
 	retval = add_dirent_to_buf(handle, &fname, dir, inode, de, bh);
 out:
 	ext4_fname_free_filename(&fname);
