@@ -156,9 +156,15 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags)
 	static const struct super_operations default_op;
 
 	if (s) {
-		if (security_sb_alloc(s))
-			goto out_free_sb;
-
+	if (security_sb_alloc(s)) {
+			/*
+			 * We cannot call security_sb_free() without
+			 * security_sb_alloc() succeeding. So bail out manually
+			 */
+			kfree(s);
+			s = NULL;
+			goto out;
+		}
 #ifdef CONFIG_SMP
 		s->s_files = alloc_percpu(struct list_head);
 		if (!s->s_files)

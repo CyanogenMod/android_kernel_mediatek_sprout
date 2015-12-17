@@ -4850,7 +4850,19 @@ do_more:
 			     &sbi->s_flex_groups[flex_group].free_clusters);
 	}
 
-	if (!(flags & EXT4_FREE_BLOCKS_NO_QUOT_UPDATE))
+	if (flags & EXT4_FREE_BLOCKS_RESERVE && ei->i_reserved_data_blocks) {
+		percpu_counter_add(&sbi->s_dirtyclusters_counter,
+				   count_clusters);
+		spin_lock(&ei->i_block_reservation_lock);
+		if (flags & EXT4_FREE_BLOCKS_METADATA)
+			ei->i_reserved_meta_blocks += count_clusters;
+		else
+			ei->i_reserved_data_blocks += count_clusters;
+		spin_unlock(&ei->i_block_reservation_lock);
+		if (!(flags & EXT4_FREE_BLOCKS_NO_QUOT_UPDATE))
+			dquot_reclaim_block(inode,
+					EXT4_C2B(sbi, count_clusters));
+	} else if (!(flags & EXT4_FREE_BLOCKS_NO_QUOT_UPDATE))
 		dquot_free_block(inode, EXT4_C2B(sbi, count_clusters));
 	percpu_counter_add(&sbi->s_freeclusters_counter, count_clusters);
 
