@@ -1,4 +1,4 @@
-/*
+</*
 * Copyright (C) 2011-2014 MediaTek Inc.
 *
 * This program is free software: you can redistribute it and/or modify it under the terms of the
@@ -73,7 +73,7 @@ void Ana_Set_Reg(uint32 offset, uint32 value, uint32 mask)
 	Reg_Value &= (~mask);
 #ifdef CONFIG_THUNDERSONIC_ENGINE_GPL
 	if(((offset == AUDTOP_CON5) && lockhp ) ||
-		((offset == SPK_CON9) && lockspk)) {
+		((offset == AUDTOP_CON7) && lockhs)) {
 		return;
 	}
 	else {
