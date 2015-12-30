@@ -45,6 +45,9 @@
 #include <mach/battery_common.h>
 #include <mach/charging.h>
 #include "cust_charging.h"
+#ifdef CONFIG_THUNDERCHARGE_CONTROL
+#include "thundercharge_control.h"
+#endif
 #include <mach/mt_boot.h>
 #include <linux/delay.h>
 #include <mach/battery_meter.h>
@@ -331,13 +334,25 @@ void select_charging_curret_linear(void)
 			}
 #else
 			{
+#ifdef CONFIG_THUNDERCHARGE_CONTROL
+				g_temp_CC_value_linear = custom_usb_current;
+#else
 				g_temp_CC_value_linear = cur_usb_charger;
+#endif
 			}
 #endif
 		} else if (BMT_status.charger_type == NONSTANDARD_CHARGER) {
+#ifdef CONFIG_THUNDERCHARGE_CONTROL
+			g_temp_CC_value_linear = custom_ac_current;
+#else
 			g_temp_CC_value_linear = cur_no_std_charger;
+#endif
 		} else if (BMT_status.charger_type == STANDARD_CHARGER) {
+#ifdef CONFIG_THUNDERCHARGE_CONTROL
+			g_temp_CC_value_linear = custom_ac_current;
+#else
 			g_temp_CC_value_linear = cur_ac_charger;
+#endif
 		} else if (BMT_status.charger_type == CHARGING_HOST) {
 			g_temp_CC_value_linear = cur_charging_host;
 		} else if (BMT_status.charger_type == APPLE_2_1A_CHARGER) {
