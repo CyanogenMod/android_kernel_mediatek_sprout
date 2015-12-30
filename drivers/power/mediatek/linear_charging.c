@@ -335,10 +335,7 @@ void select_charging_curret_linear(void)
 #else
 			{
 #ifdef CONFIG_THUNDERCHARGE_CONTROL
-				if(mswitch)
-					g_temp_CC_value_linear = custom_usb_current;
-				else
-					g_temp_CC_value_linear = cur_usb_charger;
+				g_temp_CC_value_linear = custom_usb_current;
 #else
 				g_temp_CC_value_linear = cur_usb_charger;
 #endif
@@ -346,19 +343,13 @@ void select_charging_curret_linear(void)
 #endif
 		} else if (BMT_status.charger_type == NONSTANDARD_CHARGER) {
 #ifdef CONFIG_THUNDERCHARGE_CONTROL
-			if(mswitch)
-				g_temp_CC_value_linear = custom_ac_current;
-			else
-				g_temp_CC_value_linear = cur_no_std_charger;
+			g_temp_CC_value_linear = custom_ac_current;
 #else
 			g_temp_CC_value_linear = cur_no_std_charger;
 #endif
 		} else if (BMT_status.charger_type == STANDARD_CHARGER) {
 #ifdef CONFIG_THUNDERCHARGE_CONTROL
-			if(mswitch)
-				g_temp_CC_value_linear = custom_ac_current;
-			else
-				g_temp_CC_value_linear = cur_ac_charger;
+			g_temp_CC_value_linear = custom_ac_current;
 #else
 			g_temp_CC_value_linear = cur_ac_charger;
 #endif
