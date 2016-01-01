@@ -282,6 +282,12 @@ config THUNDERSONIC_ENGINE_GPL
     help
     Sound Control for MTK Audio driver
 
+config MTK_WIFI_PM_CONTROL
+    tristate "Mediatek Wi-Fi PM Control"
+    default n
+    help
+    Interface to control Wi-Fi Power Saver Modes
+
 source "drivers/misc/mediatek/Kconfig.kernel"
 source "drivers/misc/mediatek/Kconfig.drivers"
 source "drivers/misc/mediatek/smartpa/Kconfig"
