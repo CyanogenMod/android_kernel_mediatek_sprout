@@ -2,3 +2,10 @@ config THUNDERPLUG_CONTROL
 	bool "Enable plugging down/up of cores based on load per core"
 	help
 	  This driver hotplugs cpu cores based on per-core load
+
+config USES_MALI_MP2_GPU
+	bool "Enable hotplugging feature for Mali GPUs"
+	default n
+	help
+	  This option enables hotplugging features inside thunderplug 
+	  for Mali 400MP2 GPUs.
