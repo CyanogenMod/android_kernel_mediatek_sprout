@@ -1263,6 +1263,9 @@ u32 mali_pp_scheduler_get_num_cores_enabled(void)
 {
 	return enabled_cores;
 }
+#ifdef CONFIG_THUNDERPLUG_CONTROL
+EXPORT_SYMBOL(mali_pp_scheduler_get_num_cores_enabled);
+#endif
 
 _mali_osk_errcode_t _mali_ukk_get_pp_core_version(_mali_uk_get_pp_core_version_s *args)
 {
@@ -1850,6 +1853,13 @@ static void mali_pp_scheduler_core_scale_down(unsigned int target_core_nr)
 
 	mali_pp_scheduler_resume();
 }
+
+#ifdef CONFIG_THUNDERPLUG_CONTROL
+void gpu_enable(int i) {
+	mali_pp_scheduler_set_perf_level(i, MALI_TRUE);
+}
+EXPORT_SYMBOL_GPL(gpu_enable);
+#endif
 
 int mali_pp_scheduler_set_perf_level(unsigned int target_core_nr, mali_bool override)
 {
