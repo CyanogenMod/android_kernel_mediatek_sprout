@@ -36,9 +36,7 @@ extern uint32 Ana_Get_Reg(uint32 offset);
 
 int cust_hpl_index = 4;
 int cust_hpr_index = 4;
-int cust_hs_index = 11;
 int cust_spk_index = 7;
-bool lockhs = false;
 bool lockhp = false;
 bool lockspk = false;
 
@@ -58,15 +56,6 @@ static void setHPRGain(void) {
 	lockhp = false;
 	Ana_Set_Reg(AUDTOP_CON5, index, mask);
 	lockhp = true;
-}
-
-static void setHSGain(void) {
-	uint32 mask, index;
-	mask = 0x000000f0 | 0xffff0000;
-	index = (uint32) cust_hs_index;
-	lockhs = false;
-	Ana_Set_Reg(AUDTOP_CON7, index, mask);
-	lockhs = true;
 }
 
 static void setSPKGain(void) {
@@ -119,26 +108,6 @@ static ssize_t hprgain_reg_store(struct kobject *kobj, struct kobj_attribute *at
 	return count;
 }
 
-static ssize_t hsgain_reg_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	uint32 currentVol;
-	int val;
-	currentVol = Ana_Get_Reg(AUDTOP_CON7) >> 4;
-	currentVol &= 0xf;
-	val = (int) currentVol;
-	return sprintf(buf, "%d\n", val);
-}
-
-static ssize_t hsgain_reg_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
-{
-	unsigned int val;
-	sscanf(buf, "%u", &val);
-		cust_hs_index = (uint32) val;
-		setHSGain();
-
-	return count;
-}
-
 static ssize_t spk_reg_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	uint32 currentVol;
@@ -173,11 +142,6 @@ static struct kobj_attribute hprgain_attribute =
 		0666,
 		hprgain_reg_show, hprgain_reg_store);
 
-static struct kobj_attribute hsgain_attribute =
-	__ATTR(hs_gain,
-		0666,
-		hsgain_reg_show, hsgain_reg_store);
-
 static struct kobj_attribute spkgain_attribute =
 	__ATTR(spk_gain,
 		0666,
@@ -192,7 +156,6 @@ static struct attribute *thundersonic_engine_attrs[] =
 	{
 		&hplgain_attribute.attr,
 		&hprgain_attribute.attr,
-		&hsgain_attribute.attr,
 		&spkgain_attribute.attr,
 		&thundersonic_version_attribute.attr,
 		NULL,
