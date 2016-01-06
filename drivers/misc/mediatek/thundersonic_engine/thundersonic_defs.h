@@ -14,8 +14,6 @@
 
 extern int cust_hpl_index;
 extern int cust_hpr_index;
-extern int cust_hs_index;
 extern int cust_spk_index;
-extern bool lockhs;
 extern bool lockhp;
 extern bool lockspk;
