@@ -37,8 +37,10 @@ extern uint32 Ana_Get_Reg(uint32 offset);
 int cust_hpl_index = 4;
 int cust_hpr_index = 4;
 int cust_hs_index = 11;
+int cust_spk_index = 7;
 bool lockhs = false;
 bool lockhp = false;
+bool lockspk = false;
 
 static void setHPLGain(void) {
 	uint32 mask, index;
@@ -65,6 +67,16 @@ static void setHSGain(void) {
 	lockhs = false;
 	Ana_Set_Reg(AUDTOP_CON7, index, mask);
 	lockhs = true;
+}
+
+static void setSPKGain(void) {
+	uint32 mask, index;
+	mask = 0x00000f00 | 0xffff0000;
+	index = (uint32) cust_spk_index;
+	lockspk = false;
+	Ana_Set_Reg(SPK_CON9, index, mask);
+	Ana_Set_Reg(SPK_CON9, index, mask);
+	lockspk = true;
 }
 
 static ssize_t hplgain_reg_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -127,6 +139,25 @@ static ssize_t hsgain_reg_store(struct kobject *kobj, struct kobj_attribute *att
 	return count;
 }
 
+static ssize_t spk_reg_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	uint32 currentVol;
+	int val;
+	currentVol = Ana_Get_Reg(SPK_CON9) >> 8;
+	val = (int) currentVol;
+	return sprintf(buf, "%d\n", val);
+}
+
+static ssize_t spk_reg_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	unsigned int val, newval;
+	sscanf(buf, "%u", &val);
+	cust_spk_index = (uint32) newval;
+	setSPKGain();
+
+	return count;
+}
+
 static ssize_t thundersonic_version_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	return sprintf(buf, "version: %u.%u\n", ENGINE_VERSION, ENGINE_VERSION_SUB);
@@ -147,6 +178,11 @@ static struct kobj_attribute hsgain_attribute =
 		0666,
 		hsgain_reg_show, hsgain_reg_store);
 
+static struct kobj_attribute spkgain_attribute =
+	__ATTR(spk_gain,
+		0666,
+		spk_reg_show, spk_reg_store);
+
 static struct kobj_attribute thundersonic_version_attribute =
 	__ATTR(engine_version,
 		0444,
@@ -157,6 +193,7 @@ static struct attribute *thundersonic_engine_attrs[] =
 		&hplgain_attribute.attr,
 		&hprgain_attribute.attr,
 		&hsgain_attribute.attr,
+		&spkgain_attribute.attr,
 		&thundersonic_version_attribute.attr,
 		NULL,
 	};
