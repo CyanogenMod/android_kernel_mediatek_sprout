@@ -119,9 +119,9 @@ static ssize_t spk_reg_show(struct kobject *kobj, struct kobj_attribute *attr, c
 
 static ssize_t spk_reg_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
 {
-	unsigned int val, newval;
+	unsigned int val;
 	sscanf(buf, "%u", &val);
-	cust_spk_index = (uint32) newval;
+	cust_spk_index = (uint32) val;
 	setSPKGain();
 
 	return count;
