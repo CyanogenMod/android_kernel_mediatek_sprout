@@ -14,12 +14,9 @@
 
 extern int cust_hpl_index;
 extern int cust_hpr_index;
-<<<<<<< HEAD
-extern int cust_spk_index;
-extern bool lockhp;
-extern bool lockspk;
-=======
 extern int cust_hs_index;
+extern int cust_spk_index;
 extern bool lockhs;
 extern bool lockhp;
->>>>>>> 94cf40a... thundersonic-engine 3.x: Initial GPL release for MTK Audio Driver
+extern bool lockspk;
+
