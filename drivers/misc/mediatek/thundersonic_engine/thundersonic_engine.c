@@ -29,7 +29,7 @@
 #define THUNDERSONIC "thundersonic"
 
 #define ENGINE_VERSION  3
-#define ENGINE_VERSION_SUB 0
+#define ENGINE_VERSION_SUB 1
 
 extern void Ana_Set_Reg(uint32 offset, uint32 value, uint32 mask);
 extern uint32 Ana_Get_Reg(uint32 offset);
