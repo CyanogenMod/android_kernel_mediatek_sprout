@@ -1487,7 +1487,7 @@ static void parse_boot_reason(char** cmdline) /*parse boot reason*/
     }
 }
 
-void mt_fixup(struct tag *tags, char **cmdline, struct meminfo *mi)
+void __init mt_fixup(struct tag *tags, char **cmdline, struct meminfo *mi)
 {
     struct tag *cmdline_tag = NULL;
     struct tag *reserved_mem_bank_tag = NULL;
@@ -2747,7 +2747,7 @@ static int __init limit_mem_setup(char *param)
 }
 early_param("limit_mem", limit_mem_setup);
 
-void mt_reserve(void)
+void __init mt_reserve(void)
 {
 //    aee_dram_console_reserve_memory();
     //mrdump_reserve_memory();

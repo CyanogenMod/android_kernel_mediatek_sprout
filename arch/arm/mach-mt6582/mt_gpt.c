@@ -620,7 +620,7 @@ static long notrace mt_read_sched_clock(void)
     return mt_gpt_read(NULL);
 }
 
-static void mt_gpt_init(void);
+static void __refdata mt_gpt_init(void);
 struct mt_clock mt6582_gpt =
 {
     .clockevent =
@@ -880,7 +880,7 @@ static inline void setup_syscnt_assist(void) {}
 static inline void start_syscnt_assist(void) {}
 #endif
 
-static void mt_gpt_init(void)
+static void __refdata mt_gpt_init(void)
 {
     int i;
     unsigned long save_flags;

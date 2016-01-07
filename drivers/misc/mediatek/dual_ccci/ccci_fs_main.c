@@ -461,7 +461,7 @@ _REG_CHR_REGION_FAIL:
 }
 
 
-void __exit ccci_fs_exit(int md_id)
+void ccci_fs_exit(int md_id)
 {
 	fs_ctl_block_t	*ctl_b = fs_ctl_block[md_id];
 
