@@ -190,8 +190,6 @@ static inline unsigned long __phys_to_virt(unsigned long x)
 }
 #else
 
-#define PHYS_OFFSET	PLAT_PHYS_OFFSET
-
 #define __virt_to_phys(x)	((x) - PAGE_OFFSET + PHYS_OFFSET)
 #define __phys_to_virt(x)	((x) - PHYS_OFFSET + PAGE_OFFSET)
 
