@@ -19,6 +19,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/cpu.h>
+#include <linux/cpufreq.h>
 #include <linux/earlysuspend.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h> //seq_printf, single_open
@@ -105,14 +106,18 @@ extern void hp_set_dynamic_cpu_hotplug_enable(int enable);
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static void mt_hotplug_mechanism_early_suspend(struct early_suspend *h)
 {
-    HOTPLUG_INFO("mt_hotplug_mechanism_early_suspend\n");
+    struct cpufreq_policy *policy;
+    policy = cpufreq_cpu_get(0);
+        if (!policy)
+            return;
 
     if (!g_enable)
         goto early_suspend_end;
     
-    if (!g_enable_cpu_rush_boost)
+    if (!g_enable_cpu_rush_boost && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
+        HOTPLUG_INFO("mt_hotplug_mechanism_early_suspend\n");
         g_prev_cpu_rush_boost_enable = hp_get_cpu_rush_boost_enable();
         hp_set_cpu_rush_boost_enable(0);
     #endif //#ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
@@ -133,14 +138,18 @@ early_suspend_end:
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static void mt_hotplug_mechanism_late_resume(struct early_suspend *h)
 {
-    HOTPLUG_INFO("mt_hotplug_mechanism_late_resume\n");
+    struct cpufreq_policy *policy;
+    policy = cpufreq_cpu_get(0);
+        if (!policy)
+            return;
 
     if (!g_enable)
         goto late_resume_end;
     
-    if (!g_enable_cpu_rush_boost)
+    if (!g_enable_cpu_rush_boost && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
+        HOTPLUG_INFO("mt_hotplug_mechanism_late_resume\n");
         hp_set_cpu_rush_boost_enable(g_prev_cpu_rush_boost_enable);
     #endif //#ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
     }
@@ -171,14 +180,18 @@ static int mt_hotplug_mechanism_probe(struct platform_device *pdev)
 ********************************/
 static int mt_hotplug_mechanism_suspend(struct platform_device *pdev, pm_message_t state)
 {
-    HOTPLUG_INFO("mt_hotplug_mechanism_suspend\n");
+    struct cpufreq_policy *policy;
+    policy = cpufreq_cpu_get(0);
+        if (!policy)
+            return;
     
     if (!g_enable)
         return 0;
     
-    if (!g_enable_dynamic_cpu_hotplug_at_suspend)
+    if (!g_enable_dynamic_cpu_hotplug_at_suspend && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
+        HOTPLUG_INFO("mt_hotplug_mechanism_suspend\n");
         g_prev_dynamic_cpu_hotplug_enable = hp_get_dynamic_cpu_hotplug_enable();
         hp_set_dynamic_cpu_hotplug_enable(0);
     #endif //#ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
@@ -194,14 +207,18 @@ static int mt_hotplug_mechanism_suspend(struct platform_device *pdev, pm_message
 ********************************/
 static int mt_hotplug_mechanism_resume(struct platform_device *pdev)
 {
-     HOTPLUG_INFO("mt_hotplug_mechanism_resume\n");
+    struct cpufreq_policy *policy;
+    policy = cpufreq_cpu_get(0);
+        if (!policy)
+           return;
     
     if (!g_enable)
         return 0;
     
-    if (!g_enable_dynamic_cpu_hotplug_at_suspend)
+    if (!g_enable_dynamic_cpu_hotplug_at_suspend && strcmp(policy->governor->name, "hotplug") == 0)
     {
     #ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
+        HOTPLUG_INFO("mt_hotplug_mechanism_resume\n");
         hp_set_dynamic_cpu_hotplug_enable(g_prev_dynamic_cpu_hotplug_enable);
     #endif //#ifdef CONFIG_CPU_FREQ_GOV_HOTPLUG
     }
@@ -308,7 +325,6 @@ static int mt_hotplug_mechanism_read_test1(struct seq_file *m, void *v)
     //HOTPLUG_INFO("[power/hotplug] thermal_debug_1 (%d)(%d)(%d)(%d)(%ld)(%ld)\n", g_trigger_hp_work, g_tlp_avg_average, g_tlp_avg_current,
     //    g_cpus_sum_load_current, g_cpu_up_sum_load, g_cpu_down_sum_load);
     //HOTPLUG_INFO("[power/hotplug] thermal_debug_2 (%d)(%d)(%d)(%d)\n", g_cpu_up_count, g_cpu_up_load_index, g_cpu_down_count, g_cpu_down_load_index);
-
     return 0;
 }
 

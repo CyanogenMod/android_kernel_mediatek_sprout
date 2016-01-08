@@ -885,7 +885,7 @@ _RELEASE_CTL_MEMORY:
 }
 
 
-void __exit ccci_tty_exit(int md_id)
+void ccci_tty_exit(int md_id)
 {
 	tty_ctl_block_t *ctlb = tty_ctlb[md_id];
 

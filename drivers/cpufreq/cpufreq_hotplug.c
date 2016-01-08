@@ -490,7 +490,7 @@ static void hp_reset_strategy(void)
 	mutex_unlock(&hp_mutex);
 }
 
-static void hp_work_handler(struct work_struct *work)
+static void __cpuinit hp_work_handler(struct work_struct *work)
 {
 	struct dbs_data *dbs_data = per_cpu(hp_cpu_dbs_info, 0).cdbs.cur_policy->governor_data;	/* TODO: FIXME, cpu = 0 */
 	struct hp_dbs_tuners *hp_tuners;
