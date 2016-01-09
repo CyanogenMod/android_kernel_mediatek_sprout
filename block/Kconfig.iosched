@@ -88,6 +88,18 @@ config IOSCHED_FIOPS
 	---help---
 	Requests are chosen according to SSTF with a penalty of rev_penalty
 	for switching head direction.
+
+config IOSCHED_ROW
+	tristate "ROW I/O scheduler"
+	default y
+	---help---
+	  The ROW I/O scheduler gives priority to READ requests over the
+	  WRITE requests when dispatching, without starving WRITE requests.
+	  Requests are kept in priority queues. Dispatching is done in a RR
+	  manner when the dispatch quantum for each queue is calculated
+	  according to queue priority.
+	  Most suitable for mobile devices.
+
 config IOSCHED_TRIPNDROID
 	tristate "Tripndroid"
 	default y
@@ -143,6 +155,16 @@ choice
 
 	config DEFAULT_FIOPS
 		bool "FIOPS" if IOSCHED_FIOPS=y
+        
+        config DEFAULT_ROW
+		bool "ROW" if IOSCHED_ROW=y
+		help
+		  The ROW I/O scheduler gives priority to READ requests
+		  over the WRITE requests when dispatching, without starving
+		  WRITE requests. Requests are kept in priority queues.
+		  Dispatching is done in a RR manner when the dispatch quantum
+		  for each queue is defined according to queue priority.
+		  Most suitable for mobile devices.
 
 	config DEFAULT_TRIPNDROID
 		bool "TRIPNDROID" if IOSCHED_TRIPNDROID=y
@@ -160,6 +182,7 @@ config DEFAULT_IOSCHED
 	default "zen" if DEFAULT_ZEN
 	default "fifo" if DEFAULT_FIFO
 	default "fiops" if DEFAULT_FIOPS
+        default "row" if DEFAULT_ROW
 	default "tripndroid" if DEFAULT_TRIPNDROID
 
 endmenu
