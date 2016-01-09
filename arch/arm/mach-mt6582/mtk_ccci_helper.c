@@ -409,7 +409,7 @@ unsigned int *get_modem_size_list(void)
 EXPORT_SYMBOL(get_modem_size_list);
 
 //Reserve DRAM memory for MD from system
-void ccci_md_mem_reserve(void)
+void __init ccci_md_mem_reserve(void)
 {
 	void* ptr;
 	ptr = (void*)arm_memblock_steal(modem_size_list[0],SZ_32M);

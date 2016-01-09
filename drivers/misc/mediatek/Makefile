@@ -9,6 +9,7 @@ obj-y	+= aee/
 obj-y	+= fmradio/
 obj-y	+= gps/
 obj-y	+= hwmon/
+obj-$(CONFIG_THUNDERSONIC_ENGINE_GPL) += thundersonic_engine/
 
 obj-$(CONFIG_MTK_CCCI_DRIVER)  +=  ccci/
 obj-$(CONFIG_MTK_CCCI_EXT)     +=  dual_ccci/

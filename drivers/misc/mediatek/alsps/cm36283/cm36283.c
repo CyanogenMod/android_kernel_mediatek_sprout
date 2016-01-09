@@ -42,6 +42,11 @@
 #include <alsps.h>
 #include <linux/batch.h>
 #include <mach/sensors_ssb.h>
+
+#ifdef CONFIG_POCKETMOD
+#include <linux/pocket_mod.h>
+#endif
+
 /******************************************************************************
  * configuration
 *******************************************************************************/
@@ -601,6 +606,34 @@ static int cm36283_get_als_value(struct cm36283_priv *obj, u16 als)
 
 }
 
+#ifdef CONFIG_POCKETMOD
+int cm36283_pocket_detection_check(void)
+{
+	int ps_val;
+
+	struct cm36283_priv *obj = cm36283_obj;
+	
+	if(obj == NULL)
+	{
+		APS_DBG("[CM36283] cm36283_obj is NULL!");
+		return 0;
+	}
+	else
+	{
+		cm36283_enable_ps(obj->client, 1);
+
+		msleep(50);
+
+		ps_val = cm36283_get_ps_value(obj, obj->ps);
+
+		APS_DBG("[CM36283] %s ps_val = %d\n", __func__, ps_val);
+
+		cm36283_enable_ps(obj->client, 0);
+
+		return (ps_val);
+	}
+}
+#endif
 
 /*-------------------------------attribute file for debugging----------------------------------*/
 
@@ -2064,6 +2097,10 @@ static int update_alsps_data(void)
             cm36283_get_cust_alsps_hw()->als_level[i] = cm36283_alsps_data->als_level[i];
         for (i=0; i<16; i++)
             cm36283_get_cust_alsps_hw()->als_value[i] = cm36283_alsps_data->als_value[i];
+
+	#ifdef CONFIG_POCKETMOD
+		alsps_dev = 'c';
+	#endif
 
         APS_LOG("[%s]cm36283 success update addr=0x%x,i2c_num=%d,threshold_high=%d,threshold_low=%d\n",
         __func__,cm36283_alsps_data->i2c_addr[0],cm36283_alsps_data->i2c_num,cm36283_alsps_data->ps_threshold_high,cm36283_alsps_data->ps_threshold_low);
